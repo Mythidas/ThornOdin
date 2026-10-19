@@ -4,6 +4,10 @@
     {
       "name": "extern",
       "path": "extern"
+    },
+    {
+      "name": "thorn",
+      "path": "thorn/src"
     }
   ],
   "enable_semantic_tokens": true,

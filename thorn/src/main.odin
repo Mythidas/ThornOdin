@@ -3,11 +3,14 @@ package main
 import "core"
 import "core:log"
 import "core:mem"
-import "world"
+import "event"
+import "graphics"
+import "input"
 
-TestStruct :: struct {
-	id:  int,
-	pos: [2]f32,
+test_layer := core.Layer {
+	on_update = proc(f: ^core.Frame) {
+		graphics.draw_quad(f.renderer)
+	},
 }
 
 main :: proc() {
@@ -34,32 +37,6 @@ main :: proc() {
 	}
 	defer core.application_destroy(&app)
 
-	// TESTING
-
-	reg := world.Registry{}
-	world.create_registry(&reg)
-	log.info("REG CREATED")
-
-	ent1 := world.create_entity(&reg)
-	log.info("ENT CREATED")
-	comp1 := world.create_component(&reg, ent1, TestStruct)
-	log.info("COMP CREATED")
-	assert(comp1 != nil)
-
-	comp1.id = 1
-	comp1.pos = {0.5, 2.1}
-	log.info("COMP UPDATED")
-
-	comp_c := world.get_component(&reg, ent1, TestStruct)
-	log.info("COMP FETCHED")
-	log.infof(
-		"Entity: %v, TestStruct: id [%v], pos [%v, %v]",
-		ent1,
-		comp_c.id,
-		comp_c.pos.x,
-		comp_c.pos.y,
-	)
-	world.destroy_registry(&reg)
-
+	core.application_attach_layer(&app, &test_layer)
 	core.application_run(&app)
 }

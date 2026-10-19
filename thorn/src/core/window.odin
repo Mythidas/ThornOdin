@@ -1,5 +1,8 @@
 package core
 
+import ev "thorn:event"
+import "thorn:input"
+
 import "core:log"
 import "vendor:sdl3"
 
@@ -29,7 +32,7 @@ create_window :: proc(window: ^Window) -> (err: WindowError) {
 window_tick :: proc(
 	window: ^Window,
 	app: ^Application,
-	handler: proc(app: ^Application, e: ThornEvent),
+	handler: proc(app: ^Application, e: ev.ThornEvent),
 ) {
 	if window == nil || app == nil do return
 
@@ -37,20 +40,38 @@ window_tick :: proc(
 	for sdl3.PollEvent(&event) {
 		#partial switch event.type {
 		case .QUIT:
-			handler(app, {type = .WINDOW_CLOSE, info = {}})
+			handler(app, ev.WindowCloseEvent{})
 			break
 		case .WINDOW_RESIZED:
 			handler(
 				app,
-				{
-					type = .WINDOW_RESIZE,
-					info = WindowResizeEvent {
-						width = event.window.data1,
-						height = event.window.data2,
-					},
-				},
+				ev.WindowResizeEvent{width = event.window.data1, height = event.window.data2},
 			)
 			break
+		case .KEY_DOWN:
+			handler(
+				app,
+				ev.KeyPressEvent {
+					key = u8(input.key_from_scancode(event.key.scancode)),
+					repeat = event.key.repeat,
+				},
+			)
+		case .KEY_UP:
+			handler(app, ev.KeyReleaseEvent{key = u8(input.key_from_scancode(event.key.scancode))})
+		case .MOUSE_BUTTON_DOWN:
+			handler(
+				app,
+				ev.KeyPressEvent{key = u8(input.key_from_mouse_button(event.button.button))},
+			)
+		case .MOUSE_BUTTON_UP:
+			handler(
+				app,
+				ev.KeyReleaseEvent{key = u8(input.key_from_mouse_button(event.button.button))},
+			)
+		case .MOUSE_MOTION:
+			handler(app, ev.MouseMoveEvent{pos = {event.motion.xrel, event.motion.yrel}})
+		case .MOUSE_WHEEL:
+			handler(app, ev.MouseScrollEvent{scroll = event.wheel.y})
 		}
 	}
 }
