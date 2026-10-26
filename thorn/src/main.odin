@@ -1,17 +1,10 @@
 package main
 
-import "core"
 import "core:log"
 import "core:mem"
-import "event"
-import "graphics"
-import "input"
-
-test_layer := core.Layer {
-	on_update = proc(f: ^core.Frame) {
-		graphics.draw_quad(f.renderer)
-	},
-}
+import "thorn:engine"
+import "thorn:graphics"
+import "thorn:input"
 
 main :: proc() {
 	track: mem.Tracking_Allocator
@@ -28,15 +21,35 @@ main :: proc() {
 		}
 	}
 
-	app: core.Application
-
-	if err := core.application_init(&app); err != nil {
-		core.application_destroy(&app)
-		log.error("Failed to init application!")
+	err := engine.init()
+	if err != nil {
+		log.errorf("Thorn failed to init: %v", err)
 		return
 	}
-	defer core.application_destroy(&app)
+	defer engine.destroy()
 
-	core.application_attach_layer(&app, &test_layer)
-	core.application_run(&app)
+	frame_index: u64 = 0
+	for engine.tick() {
+		if frame_index % 200 == 0 {
+			log.infof(
+				"Delta Time: %v | FPS: %v",
+				engine.get_delta_time(),
+				1000 / engine.get_delta_time(),
+			)
+		}
+
+		graphics.begin_frame(
+			{90, 10, -1, 1, {0.2, 0.5, 0.6, 1}, .ORTHOGRAPHIC},
+			{0, 0, -6},
+			{0, 0, 0},
+		)
+		graphics.draw_quad()
+		graphics.end_frame()
+
+		if input.is_pressed(.ESCAPE) {
+			engine.quit()
+		}
+
+		frame_index += 1
+	}
 }

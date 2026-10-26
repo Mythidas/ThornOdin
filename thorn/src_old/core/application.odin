@@ -29,6 +29,7 @@ Application :: struct {
 	renderer: graphics.Renderer,
 	running:  bool,
 	layers:   [dynamic]^Layer,
+	systems:  [dynamic]^Layer,
 }
 
 application_init :: proc(app: ^Application) -> (err: AppError) {
@@ -39,6 +40,7 @@ application_init :: proc(app: ^Application) -> (err: AppError) {
 	graphics.create_renderer(&app.renderer, app.window.handle) or_return
 
 	app.layers = make([dynamic]^Layer)
+	app.systems = make([dynamic]^Layer)
 
 	return nil
 }
@@ -68,7 +70,7 @@ application_run :: proc(app: ^Application) {
 
 		graphics.renderer_begin_frame(
 			&app.renderer,
-			graphics.Camera{90, 10, -1, 1, {0.2, 0.5, 0.6, 1}, .ORTHOGRAPHIC},
+			{90, 10, -1, 1, {0.2, 0.5, 0.6, 1}, .ORTHOGRAPHIC},
 			{0, 0, -6},
 			{0, 0, 0},
 		)
@@ -76,6 +78,10 @@ application_run :: proc(app: ^Application) {
 		frame := Frame {
 			dt       = time.duration_milliseconds(time.since(last_frame)),
 			renderer = &app.renderer,
+		}
+
+		for &s in app.systems {
+			if s.on_update != nil do s.on_update(&frame)
 		}
 
 		for &l in app.layers {
@@ -97,6 +103,14 @@ application_attach_layer :: proc(app: ^Application, l: ^Layer) {
 	if l.on_attach != nil do l.on_attach()
 }
 
+application_attach_system :: proc(app: ^Application, s: ^Layer) {
+	ensure(app != nil, "App can not be nil")
+	ensure(s != nil, "System can not be nil")
+
+	append(&app.systems, s)
+	if s.on_attach != nil do s.on_attach()
+}
+
 @(private = "file")
 application_on_event :: proc(app: ^Application, tev: event.ThornEvent) {
 	#partial switch e in tev {
@@ -107,7 +121,12 @@ application_on_event :: proc(app: ^Application, tev: event.ThornEvent) {
 
 	input.on_event(tev)
 
-	// Process events through different features
+	for &s in app.systems {
+		if s.on_event != nil {
+			if result := s.on_event(tev); result do break
+		}
+	}
+
 	for &l in app.layers {
 		if l.on_event != nil {
 			if result := l.on_event(tev); result do break

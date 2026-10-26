@@ -3,6 +3,7 @@ package graphics
 import "core:log"
 import "core:math/linalg"
 import "core:os"
+import "thorn:components"
 import "vendor:sdl3"
 
 MAX_QUADS :: 10_000
@@ -13,19 +14,6 @@ Vertex :: struct {
 	color: [4]f32,
 	pos:   [3]f32,
 	uv:    [2]f32,
-}
-
-CameraProjection :: enum {
-	ORTHOGRAPHIC,
-	PERSPECTIVE,
-}
-
-Camera :: struct {
-	fov:         f32,
-	zoom:        f32,
-	near, far:   f32,
-	clear_color: [4]f32,
-	mode:        CameraProjection,
 }
 
 CameraUniform :: struct {
@@ -47,12 +35,17 @@ Renderer :: struct {
 	vertex_count:    u32,
 
 	// Runtime
-	camera:          Camera,
+	camera:          components.Camera,
 	camera_pos:      [3]f32,
 	camera_rot:      [3]f32,
 }
 
-calc_camera_matrix :: proc(cam: Camera, pos: [3]f32, rot: [3]f32, w, h: f32) -> matrix[4, 4]f32 {
+calc_camera_matrix :: proc(
+	cam: components.Camera,
+	pos: [3]f32,
+	rot: [3]f32,
+	w, h: f32,
+) -> matrix[4, 4]f32 {
 	aspect: f32 = w / h
 
 	mat := linalg.MATRIX4F32_IDENTITY
@@ -141,7 +134,7 @@ buffer_upload :: proc(renderer: ^Renderer, buff: ^sdl3.GPUBuffer, data: []$T) {
 
 create_graphics_pipeline :: proc(renderer: ^Renderer) -> (err: Error) {
 	vert_shader := load_shader(renderer, "res/shader.vert.spv", .VERTEX, 0, 1) or_return
-	frag_shader := load_shader(renderer, "res/shader.frag.spv", .FRAGMENT, 1, 0) or_return
+	frag_shader := load_shader(renderer, "res/shader.frag.spv", .FRAGMENT, 8, 0) or_return
 
 	vert_attrs := []sdl3.GPUVertexAttribute {
 		{location = 0, buffer_slot = 0, format = .FLOAT4, offset = u32(offset_of(Vertex, color))},
@@ -280,7 +273,12 @@ destroy_renderer :: proc(renderer: ^Renderer) {
 	renderer^ = {}
 }
 
-renderer_begin_frame :: proc(renderer: ^Renderer, cam: Camera, cam_pos: [3]f32, cam_rot: [3]f32) {
+renderer_begin_frame :: proc(
+	renderer: ^Renderer,
+	cam: components.Camera,
+	cam_pos: [3]f32,
+	cam_rot: [3]f32,
+) {
 	renderer.vertex_count = 0
 	renderer.index_count = 0
 	renderer.camera = cam
@@ -351,11 +349,17 @@ renderer_end_frame :: proc(renderer: ^Renderer) {
 	}
 	sdl3.PushGPUVertexUniformData(cmd, 0, &vert_u, size_of(vert_u))
 
-	binding := sdl3.GPUTextureSamplerBinding {
-		texture = renderer.default_texture.handle,
-		sampler = renderer.sampler,
+	binding := []sdl3.GPUTextureSamplerBinding {
+		{texture = renderer.default_texture.handle, sampler = renderer.sampler},
+		{texture = renderer.default_texture.handle, sampler = renderer.sampler},
+		{texture = renderer.default_texture.handle, sampler = renderer.sampler},
+		{texture = renderer.default_texture.handle, sampler = renderer.sampler},
+		{texture = renderer.default_texture.handle, sampler = renderer.sampler},
+		{texture = renderer.default_texture.handle, sampler = renderer.sampler},
+		{texture = renderer.default_texture.handle, sampler = renderer.sampler},
+		{texture = renderer.default_texture.handle, sampler = renderer.sampler},
 	}
-	sdl3.BindGPUFragmentSamplers(pass, 0, &binding, 1)
+	sdl3.BindGPUFragmentSamplers(pass, 0, raw_data(binding), u32(len(binding)))
 	sdl3.DrawGPUIndexedPrimitives(pass, renderer.index_count, 1, 0, 0, 0)
 
 	sdl3.EndGPURenderPass(pass)
@@ -368,9 +372,10 @@ draw_quad :: proc(
 	rot: [3]f32 = {0, 0, 0},
 	scale: [3]f32 = {1, 1, 1},
 	color: [4]f32 = {1, 1, 1, 1},
+	texture: f32 = 0,
+	uvs: [4][2]f32 = {{0, 0}, {1, 0}, {1, 1}, {0, 1}},
 ) {
 	corners := [4][2]f32{{-0.5, -0.5}, {0.5, -0.5}, {0.5, 0.5}, {-0.5, 0.5}}
-	uvs := [4][2]f32{{0, 0}, {1, 0}, {1, 1}, {0, 1}}
 
 	make_model :: proc(pos: [3]f32, rot: [3]f32, scale: [3]f32) -> matrix[4, 4]f32 {
 		return(

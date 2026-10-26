@@ -12,28 +12,28 @@ state: struct {
 	mouse_scroll:  f32,
 }
 
-on_event :: proc(tev: event.ThornEvent) {
+on_event :: proc(tev: event.Thorn_Event) {
 	#partial switch e in tev {
-	case event.KeyPressEvent:
+	case event.Key_Press_Event:
 		if e.repeat do return
 		if !state.keys_down[Key(e.key)] {
 			state.keys_pressed[Key(e.key)] = true
 		}
 		state.keys_down[Key(e.key)] = true
-	case event.KeyReleaseEvent:
+	case event.Key_Release_Event:
 		if state.keys_down[Key(e.key)] {
 			state.keys_released[Key(e.key)] = true
 		}
 		state.keys_down[Key(e.key)] = false
-	case event.MouseMoveEvent:
+	case event.Mouse_Move_Event:
 		state.mouse_delta = state.mouse_pos - e.pos
 		state.mouse_pos = e.pos
-	case event.MouseScrollEvent:
+	case event.Mouse_Scroll_Event:
 		state.mouse_scroll += e.scroll
 	}
 }
 
-on_update :: proc() {
+tick :: proc() {
 	state.keys_pressed = {}
 	state.keys_released = {}
 	state.mouse_delta = {}

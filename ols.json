@@ -7,7 +7,7 @@
     },
     {
       "name": "thorn",
-      "path": "thorn/src"
+      "path": "thorn/src_2"
     }
   ],
   "enable_semantic_tokens": true,
