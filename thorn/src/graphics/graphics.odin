@@ -108,11 +108,7 @@ init :: proc() -> (err: Graphics_Error) {
 		},
 	)
 
-	checker := [16]u8{255, 0, 255, 255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 0, 255, 255}
-	tex_slot, tex_e := texture_create_from_pixels(raw_data(checker[:]), 2, 2)
-	if tex_e != .NONE do return .GRAPHICS_INVALID_FILE
-
-	state.default_texture = texture_load_from_slot(tex_slot)
+	texture_init("res")
 
 	state.vertices = make([dynamic]Vertex, MAX_VERTICES)
 	state.vbo = sdl3.CreateGPUBuffer(

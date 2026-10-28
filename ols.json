@@ -7,7 +7,7 @@
     },
     {
       "name": "thorn",
-      "path": "thorn/src_2"
+      "path": "thorn/src"
     }
   ],
   "enable_semantic_tokens": true,
@@ -18,7 +18,7 @@
   "profiles": [
     {
       "name": "default",
-      "checker_path": ["src"]
+      "checker_path": ["thorn/src"]
     }
   ]
 }

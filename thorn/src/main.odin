@@ -28,16 +28,7 @@ main :: proc() {
 	}
 	defer engine.destroy()
 
-	frame_index: u64 = 0
 	for engine.tick() {
-		if frame_index % 200 == 0 {
-			log.infof(
-				"Delta Time: %v | FPS: %v",
-				engine.get_delta_time(),
-				1000 / engine.get_delta_time(),
-			)
-		}
-
 		graphics.begin_frame(
 			{90, 10, -1, 1, {0.2, 0.5, 0.6, 1}, .ORTHOGRAPHIC},
 			{0, 0, -6},
@@ -49,7 +40,5 @@ main :: proc() {
 		if input.is_pressed(.ESCAPE) {
 			engine.quit()
 		}
-
-		frame_index += 1
 	}
 }
