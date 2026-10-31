@@ -109,14 +109,7 @@ init :: proc() -> (err: Graphics_Error) {
 	)
 	defer if err != nil do sdl3.ReleaseGPUSampler(state.device, state.sampler)
 
-	dtex_pixels := []u8{255, 0, 255, 255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 0, 255, 255}
-	default_tex := texture_create_from_pixels(raw_data(dtex_pixels), 2, 2) or_return
-	if default_tex == nil do return .GPU_TEXTURE
-
-	texture_init(
-		"/home/mythidas/Source/thorn/res",
-		{page = default_tex, size = {2, 2}, rect = {0, 0, 1, 1}},
-	) or_return
+	texture_init("/home/mythidas/Source/thorn/res") or_return
 	defer if err != nil do texture_destroy()
 
 	state.vertices = make([]Vertex, MAX_VERTICES)
@@ -162,6 +155,8 @@ init :: proc() -> (err: Graphics_Error) {
 }
 
 destroy :: proc() {
+	ensure(state.init, "Graphics.init() needs to be called")
+
 	delete(state.calls)
 	delete(state.vertices)
 	texture_destroy()
@@ -175,6 +170,7 @@ destroy :: proc() {
 	sdl3.DestroyGPUDevice(state.device)
 
 	state.init = false
+	state = {}
 }
 
 begin_frame :: proc(cam: Camera, cam_pos: [3]f32, cam_rot: [3]f32) {

@@ -17,11 +17,11 @@ main :: proc() {
 
 	defer {
 		for _, leak in track.allocation_map {
-			log.infof("%v leaked %m", leak.location, leak.size)
+			log.errorf("%v leaked %m", leak.location, leak.size)
 		}
 
-		for _, freed in track.bad_free_array {
-			log.infof("%v freed %m", freed)
+		for bad in track.bad_free_array {
+			log.errorf("%v bad free", bad)
 		}
 	}
 
@@ -32,7 +32,7 @@ main :: proc() {
 	}
 	defer engine.destroy()
 
-	tex: graphics.Texture_Handle = 0
+	tex := graphics.texture_find("res://emblem.png")
 	for engine.tick() {
 		graphics.begin_frame(
 			{90, 10, -1, 1, {0.2, 0.5, 0.6, 1}, .ORTHOGRAPHIC},

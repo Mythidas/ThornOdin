@@ -22,7 +22,7 @@ image_load :: proc(path: string, allocator := context.allocator) -> (Image, bool
 	stbi.set_flip_vertically_on_load(1)
 	bytes := stbi.load(cpath, &w, &h, &n, 4)
 	if bytes == nil {
-		log.warnf("Failed to load image: %s", path)
+		log.warnf("Failed to load image %s: %v", path, stbi.failure_reason())
 		return {}, false
 	}
 	defer stbi.image_free(bytes)
@@ -43,7 +43,7 @@ image_destroy_all :: proc(imgs: []Image, allocator := context.allocator) {
 	if imgs == nil do return
 
 	for &img in imgs {
-		image_destroy(&img)
+		image_destroy(&img, allocator)
 	}
 
 	delete(imgs, allocator)
@@ -69,12 +69,18 @@ image_find_all :: proc(
 		if entry.type != .Regular && entry.type != .Symlink do continue
 		if !is_image(entry.name, exts) do continue
 
-		if img, ok := image_load(entry.fullpath); ok {
+		if img, ok := image_load(entry.fullpath, allocator); ok {
 			append(&imgs, img)
 		}
 	}
 
-	return slice.clone(imgs[:], allocator)
+	sort :: proc(i, j: Image) -> bool {
+		return i.h > j.h
+	}
+
+	data := slice.clone(imgs[:], allocator)
+	slice.sort_by(data, sort)
+	return data
 }
 
 @(private = "file")

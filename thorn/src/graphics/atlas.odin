@@ -11,8 +11,6 @@ Atlas_Entry :: struct {
 }
 
 Atlas :: struct {
-	w, h:    int,
-	padding: int,
 	pixels:  []byte,
 	entries: [dynamic]Atlas_Entry,
 }
@@ -73,10 +71,10 @@ atlas_pack :: proc(
 	return atlas, unpacked
 }
 
-atlas_destroy :: proc(atlas: ^Atlas) {
+atlas_destroy :: proc(atlas: ^Atlas, allocator := context.allocator) {
 	if atlas == nil do return
 
-	delete(atlas.pixels)
+	delete(atlas.pixels, allocator)
 	delete(atlas.entries)
 	atlas^ = {}
 }
