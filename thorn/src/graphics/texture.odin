@@ -1,112 +1,84 @@
 package graphics
 
 import "core:log"
-import "core:os"
-import "core:path/filepath"
-import "core:slice"
 import "core:strings"
 import "vendor:sdl3"
-import stbi "vendor:stb/image"
-import stbrp "vendor:stb/rect_pack"
 
-Texture_Error :: enum {
-	NONE,
-	TEXTURE_IMAGE_LOAD,
-	TEXTURE_COPY_CMD,
-	TEXTURE_CREATE,
-}
+ATLAS_SIZE :: 2048
 
 Texture_Handle :: distinct int
 
-Texture_Slot :: struct {
-	page: ^sdl3.GPUTexture,
-	rect: [4]f32,
-	size: [2]int,
+Texture_Rect :: struct {
+	u0, v0: f32,
+	u1, v1: f32,
 }
 
-@(private)
+Texture_Slot :: struct {
+	page: ^sdl3.GPUTexture,
+	size: [2]int,
+	rect: Texture_Rect,
+}
+
+@(private = "file")
 textures: struct {
 	slots:   [dynamic]Texture_Slot,
 	by_path: map[string]Texture_Handle,
 }
 
-@(private = "file")
-Texture_Ref :: struct {
-	path: string,
-	w, h: int,
-	data: []byte,
-}
-
-texture_init :: proc(asset_dir: string) {
-	refs := make([dynamic]Texture_Ref)
-	defer {
-		for &ref in refs {
-			delete(ref.path)
-		}
-
-		delete(refs)
-	}
-	crawl_dir(&refs, asset_dir)
-
-	stb_ctx: stbrp.Context = {}
-	nodes := make([]stbrp.Node, 2048)
-	rects := make([]stbrp.Rect, len(refs))
-	defer delete(nodes)
-	defer delete(rects)
-
-	for i in 0 ..< len(refs) {
-		rects[i].id = i32(i)
-		rects[i].w = stbrp.Coord(refs[i].w)
-		rects[i].h = stbrp.Coord(refs[i].h)
+texture_init :: proc(asset_dir: string, default: Texture_Slot = {}) -> (err: Graphics_Error) {
+	if default != {} {
+		append(&textures.slots, default)
 	}
 
-	stbrp.init_target(&stb_ctx, 2048, 2048, raw_data(nodes), 2048)
-	result := stbrp.pack_rects(&stb_ctx, raw_data(rects), i32(len(rects)))
-	if result != 1 do log.info("More pages needed")
+	images := image_find_all(asset_dir)
+	if len(images) == 0 do return nil
+	defer image_destroy_all(images)
 
-	ATLAS_W :: 2048
-	ATLAS_H :: 2048
-	CHANNELS :: 4
+	image_slice := make([]Image, len(images))
+	copy_slice(image_slice, images)
+	defer delete(image_slice)
 
-	pixels := make([]u8, ATLAS_W * ATLAS_H * CHANNELS)
-	defer delete(pixels)
+	dir_slash := asset_dir[len(asset_dir) - 1] != '/'
+	for true {
+		atlas, unpacked := atlas_pack(ATLAS_SIZE, ATLAS_SIZE, image_slice)
+		defer atlas_destroy(&atlas)
+		defer delete(unpacked)
 
-	for r in rects {
-		if !r.was_packed do continue
+		tex, e := texture_create_from_pixels(raw_data(atlas.pixels), ATLAS_SIZE, ATLAS_SIZE)
+		if e != nil do return .GPU_TEXTURE
 
-		ref := &refs[r.id]
-		append(
-			&textures.slots,
-			Texture_Slot {
-				page = nil,
-				size = {ref.w, ref.h},
-				rect = {
-					f32(r.x) / ATLAS_W,
-					f32(r.y) / ATLAS_H,
-					f32(r.x + r.w) / ATLAS_W,
-					f32(r.y + r.h) / ATLAS_H,
+		for entry in atlas.entries {
+			img := &images[entry.image]
+			index := strings.index(img.path, asset_dir) + len(asset_dir) + int(dir_slash)
+			path := strings.concatenate({"res://", img.path[index:]})
+
+			textures.by_path[path] = Texture_Handle(len(textures.slots))
+			append(
+				&textures.slots,
+				Texture_Slot {
+					page = tex,
+					size = {img.w, img.h},
+					rect = {
+						f32(entry.x) / ATLAS_SIZE,
+						f32(entry.y) / ATLAS_SIZE,
+						f32(entry.x + entry.w) / ATLAS_SIZE,
+						f32(entry.y + entry.h) / ATLAS_SIZE,
+					},
 				},
-			},
-		)
-		textures.by_path[ref.path] = Texture_Handle(len(textures.slots) - 1)
-
-		for row in 0 ..< int(r.h) {
-			src := ref.data[row * ref.w * CHANNELS:][:ref.w * CHANNELS]
-			dst_off := ((int(r.y) + row) * ATLAS_W + int(r.x)) * CHANNELS
-			copy(pixels[dst_off:], src)
+			)
 		}
 
-		delete(ref.data)
-	}
+		if len(unpacked) == 0 do break
 
-	page, err := texture_create_from_pixels(raw_data(pixels), ATLAS_W, ATLAS_H)
-	if err != nil do return
-
-	for &s in textures.slots {
-		if s.page == nil {
-			s.page = page
+		delete(image_slice)
+		image_slice = make([]Image, len(unpacked))
+		for i, idx in unpacked {
+			image_slice[idx] = images[i]
 		}
 	}
+
+	log.info(textures)
+	return nil
 }
 
 texture_destroy :: proc() {
@@ -120,41 +92,35 @@ texture_destroy :: proc() {
 		}
 	}
 
+	for k, _ in textures.by_path {
+		delete(k)
+	}
+
 	delete(textures.slots)
 	delete(textures.by_path)
 }
 
-texture_load :: proc {
-	texture_load_from_path,
-	texture_load_from_slot,
+texture_find :: proc(path: string) -> (Texture_Handle, bool) {
+	return textures.by_path[path]
 }
 
-texture_load_from_path :: proc(path: string) -> (th: Texture_Handle, err: Texture_Error) {
-	if h, ok := textures.by_path[path]; ok do return h, nil
+texture_load :: proc(path: string) -> (th: Texture_Handle, err: Graphics_Error) {
+	if h, ok := texture_find(path); ok do return h, nil
 
-	slot := texture_create_from_path(path) or_return
+	img, ok := image_load(path)
+	if !ok do return -1, .GPU_TEXTURE
 
-	append(&textures.slots, slot)
-	th = Texture_Handle(len(textures.slots) - 1)
-	textures.by_path[strings.clone(path)] = th
-	return th, nil
+	tex := texture_create_from_pixels(raw_data(img.pixels), img.w, img.h) or_return
+	tex_handle := Texture_Handle(len(textures.slots) - 1)
+	append(&textures.slots, Texture_Slot{page = tex, size = {img.w, img.h}, rect = {0, 0, 1, 1}})
+	textures.by_path[strings.clone(path)] = tex_handle
+
+	return tex_handle, nil
 }
 
-texture_load_from_slot :: proc(slot: Texture_Slot) -> Texture_Handle {
-	append(&textures.slots, slot)
-	return Texture_Handle(len(textures.slots) - 1)
-}
-
-@(private)
-texture_create_from_path :: proc(path: string) -> (s: Texture_Slot, err: Texture_Error) {
-	w, h, n: i32
-	bytes := stbi.load(strings.clone_to_cstring(path), &w, &h, &n, 4)
-
-	if bytes == nil do return {}, .TEXTURE_IMAGE_LOAD
-	defer stbi.image_free(bytes)
-
-	tex := texture_create_from_pixels(bytes, int(w), int(h)) or_return
-	return {page = tex, size = {int(w), int(h)}, rect = {0, 0, 1, 1}}, nil
+texture_slot :: proc(th: Texture_Handle) -> Texture_Slot {
+	if th < 0 || int(th) > len(textures.slots) do return textures.slots[0]
+	return textures.slots[th]
 }
 
 @(private)
@@ -163,7 +129,7 @@ texture_create_from_pixels :: proc(
 	w, h: int,
 ) -> (
 	tex: ^sdl3.GPUTexture,
-	err: Texture_Error,
+	err: Graphics_Error,
 ) {
 	tex_info := sdl3.GPUTextureCreateInfo {
 		type                 = .D2,
@@ -177,7 +143,7 @@ texture_create_from_pixels :: proc(
 	gputex := sdl3.CreateGPUTexture(state.device, tex_info)
 	if gputex == nil {
 		log.errorf("GPU Create Texture failed: %s", sdl3.GetError())
-		return {}, .TEXTURE_CREATE
+		return {}, .GPU_TEXTURE
 	}
 
 	byte_size := u32(w * h * 4)
@@ -187,8 +153,9 @@ texture_create_from_pixels :: proc(
 	)
 	if transfer == nil {
 		log.errorf("GPU Create Transfer Buffer failed: %s", sdl3.GetError())
-		return {}, .TEXTURE_CREATE
+		return {}, .GPU_TEXTURE
 	}
+	defer sdl3.ReleaseGPUTransferBuffer(state.device, transfer)
 
 	mapped := ([^]u8)(sdl3.MapGPUTransferBuffer(state.device, transfer, false))
 	copy(mapped[:byte_size], pixels[:byte_size])
@@ -212,57 +179,8 @@ texture_create_from_pixels :: proc(
 	sdl3.EndGPUCopyPass(copy_pass)
 	if !sdl3.SubmitGPUCommandBuffer(cmd) {
 		log.errorf("GPU submit failed: %s", sdl3.GetError())
-		sdl3.ReleaseGPUTransferBuffer(state.device, transfer)
-		return {}, .TEXTURE_COPY_CMD
+		return {}, .GPU_TEXTURE
 	}
 
-	sdl3.ReleaseGPUTransferBuffer(state.device, transfer)
 	return gputex, nil
-}
-
-@(private = "file")
-read_image :: proc(path: string) -> (Texture_Ref, Texture_Error) {
-	w, h, n: i32
-	bytes := stbi.load(strings.clone_to_cstring(path, context.temp_allocator), &w, &h, &n, 4)
-	if bytes == nil {
-		log.warnf("Failed to read image %s: %s", path, stbi.failure_reason())
-		return {}, .TEXTURE_IMAGE_LOAD
-	}
-	defer stbi.image_free(bytes)
-
-	return Texture_Ref {
-			path = strings.clone(path),
-			w = int(w),
-			h = int(h),
-			data = slice.clone(bytes[:w * h * n]),
-		},
-		nil
-}
-
-@(private = "file")
-is_image :: proc(name: string) -> bool {
-	ext := filepath.ext(name)
-	return strings.equal_fold(ext, ".png") || strings.equal_fold(ext, ".jpg")
-}
-
-@(private = "file")
-crawl_dir :: proc(refs: ^[dynamic]Texture_Ref, path: string) {
-	dirs, err := os.read_directory_by_path(path, 0, context.allocator)
-	if err != nil {
-		log.errorf("Failed to read dir %s: %v", path, err)
-		return
-	}
-	defer os.file_info_slice_delete(dirs, context.allocator)
-
-	for dir in dirs {
-		#partial switch dir.type {
-		case .Directory:
-			crawl_dir(refs, dir.fullpath)
-		case .Regular:
-			if !is_image(dir.name) do continue
-			if img, err := read_image(dir.fullpath); err == nil {
-				append(refs, img)
-			}
-		}
-	}
 }

@@ -7,10 +7,9 @@ import "vendor:sdl3"
 
 Window_Error :: enum {
 	NONE,
-	WINDOW_SDL_INIT,
-	WINDOW_SDL_CREATE_WINDOW,
+	SDL_INIT,
+	SDL_WINDOW,
 }
-
 
 Window_Spec :: struct {
 	title:         cstring,
@@ -27,26 +26,27 @@ init :: proc(spec: Window_Spec) -> (err: Window_Error) {
 	ensure(state.init == false, "Window.init() already called")
 
 	if !sdl3.Init(sdl3.InitFlags{.VIDEO}) {
-		log.errorf("sdl3.Init failed: %s", sdl3.GetError())
-		return .WINDOW_SDL_INIT
+		log.errorf("Failed to init SDL: %s", sdl3.GetError())
+		return .SDL_INIT
 	}
 
 	state.handle = sdl3.CreateWindow(spec.title, spec.width, spec.height, {.RESIZABLE})
-
 	if state.handle == nil {
-		destroy()
-		return .WINDOW_SDL_CREATE_WINDOW
+		log.errorf("Failed to create SDL window: %s", sdl3.GetError())
+		sdl3.QuitSubSystem(sdl3.InitFlags{.VIDEO})
+		return .SDL_WINDOW
 	}
 
 	state.init = true
-	return .NONE
+	return nil
 }
 
 destroy :: proc() {
-	if state.handle == nil do return
+	ensure(state.init, "Window.init() needs to be called")
 
 	sdl3.DestroyWindow(state.handle)
-	sdl3.Quit()
+	sdl3.QuitSubSystem(sdl3.InitFlags{.VIDEO})
+	state = {}
 }
 
 tick :: proc(handler: proc(e: event.Thorn_Event)) {
@@ -57,8 +57,7 @@ tick :: proc(handler: proc(e: event.Thorn_Event)) {
 		#partial switch ev.type {
 		case .QUIT:
 			handler(event.Window_Close_Event{})
-			break
-		case .WINDOW_RESIZED:
+		case .WINDOW_PIXEL_SIZE_CHANGED:
 			handler(event.Window_Resize_Event{width = ev.window.data1, height = ev.window.data2})
 		case .KEY_DOWN:
 			handler(
@@ -76,7 +75,7 @@ tick :: proc(handler: proc(e: event.Thorn_Event)) {
 				event.Key_Release_Event{key = u8(input.key_from_mouse_button(ev.button.button))},
 			)
 		case .MOUSE_MOTION:
-			handler(event.Mouse_Move_Event{pos = {ev.motion.xrel, ev.motion.yrel}})
+			handler(event.Mouse_Move_Event{pos = {ev.motion.x, ev.motion.y}})
 		case .MOUSE_WHEEL:
 			handler(event.Mouse_Scroll_Event{scroll = ev.wheel.y})
 		}

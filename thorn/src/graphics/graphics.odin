@@ -4,7 +4,6 @@ import "thorn:window"
 
 import "core:log"
 import "core:math/linalg"
-import "core:os"
 
 import "vendor:sdl3"
 
@@ -14,13 +13,13 @@ MAX_VERTICES :: MAX_QUADS * 4
 
 Graphics_Error :: enum {
 	NONE,
-	GRAPHICS_INVALID_WINDOW,
-	GRAPHICS_CREATE_GPU_DEVICE,
-	GRAPHICS_CLAIM_WINDOW,
-	GRAPHICS_CREATE_GRAPHICS_PIPELINE,
-	GRAPHICS_CREATE_GPU_SHADER,
-	GRAPHICS_INVALID_FILE,
-	GRAPHICS_BUFFER_UPLOAD,
+	CLAIM_WINDOW,
+	INVALID_WINDOW,
+	GRAPHICS_PIPELINE,
+	GPU_BUFFER,
+	GPU_SHADER,
+	GPU_DEVICE,
+	GPU_TEXTURE,
 }
 
 Vertex :: struct {
@@ -29,7 +28,7 @@ Vertex :: struct {
 	uv:    [2]f32,
 }
 
-CameraProjection :: enum {
+Camera_Projection :: enum {
 	ORTHOGRAPHIC,
 	PERSPECTIVE,
 }
@@ -39,10 +38,10 @@ Camera :: struct {
 	zoom:        f32,
 	near, far:   f32,
 	clear_color: [4]f32,
-	mode:        CameraProjection,
+	mode:        Camera_Projection,
 }
 
-CameraUniform :: struct {
+Camera_Uniform :: struct {
 	mvp: matrix[4, 4]f32,
 }
 
@@ -54,47 +53,48 @@ Draw_Call :: struct {
 
 @(private)
 state: struct {
-	init:            bool,
-	window:          ^sdl3.Window,
-	device:          ^sdl3.GPUDevice,
-	pipeline:        ^sdl3.GPUGraphicsPipeline,
-	vbo:             ^sdl3.GPUBuffer,
-	ibo:             ^sdl3.GPUBuffer,
-	default_texture: Texture_Handle,
-	sampler:         ^sdl3.GPUSampler,
-	calls:           [dynamic]Draw_Call,
+	init:         bool,
+	window:       ^sdl3.Window,
+	device:       ^sdl3.GPUDevice,
+	pipeline:     ^sdl3.GPUGraphicsPipeline,
+	vbo:          GPU_Buffer,
+	ibo:          GPU_Buffer,
+	vbo_txb:      ^sdl3.GPUTransferBuffer,
+	sampler:      ^sdl3.GPUSampler,
+	calls:        [dynamic]Draw_Call,
 
 	// CPU buffer
-	vertices:        [dynamic]Vertex,
-	vertex_count:    u32,
-	index_count:     u32,
+	vertices:     []Vertex,
+	vertex_count: u32,
+	index_count:  u32,
 
 	// Runtime
-	camera:          Camera,
-	camera_pos:      [3]f32,
-	camera_rot:      [3]f32,
+	camera:       Camera,
+	camera_pos:   [3]f32,
+	camera_rot:   [3]f32,
 }
 
 init :: proc() -> (err: Graphics_Error) {
 	ensure(state.init == false, "Graphics.init() already called")
 
 	state.window = window.get_native()
-	if state.window == nil do return .GRAPHICS_INVALID_WINDOW
-	defer if err != nil do destroy()
-
+	if state.window == nil do return .INVALID_WINDOW
 
 	state.device = sdl3.CreateGPUDevice({.SPIRV}, true, nil)
 	if state.device == nil {
 		log.errorf("Failed to create GPUDevice: %s", sdl3.GetError())
-		return .GRAPHICS_CREATE_GPU_DEVICE
+		return .GPU_DEVICE
 	}
+	defer if err != nil do sdl3.DestroyGPUDevice(state.device)
 
 	if res := sdl3.ClaimWindowForGPUDevice(state.device, state.window); !res {
 		log.errorf("Failed to claim window for GPU: %s", sdl3.GetError())
-		return .GRAPHICS_CLAIM_WINDOW
+		return .CLAIM_WINDOW
 	}
+	defer if err != nil do sdl3.ReleaseWindowFromGPUDevice(state.device, state.window)
 
-	create_graphics_pipeline() or_return
+	state.pipeline = graphics_pipeline_create() or_return
+	defer if err != nil do sdl3.ReleaseGPUGraphicsPipeline(state.device, state.pipeline)
 
 	state.sampler = sdl3.CreateGPUSampler(
 		state.device,
@@ -107,28 +107,43 @@ init :: proc() -> (err: Graphics_Error) {
 			address_mode_w = .CLAMP_TO_EDGE,
 		},
 	)
+	defer if err != nil do sdl3.ReleaseGPUSampler(state.device, state.sampler)
 
-	texture_init("res")
+	dtex_pixels := []u8{255, 0, 255, 255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 0, 255, 255}
+	default_tex := texture_create_from_pixels(raw_data(dtex_pixels), 2, 2) or_return
+	if default_tex == nil do return .GPU_TEXTURE
 
-	state.vertices = make([dynamic]Vertex, MAX_VERTICES)
-	state.vbo = sdl3.CreateGPUBuffer(
+	texture_init(
+		"/home/mythidas/Source/thorn/res",
+		{page = default_tex, size = {2, 2}, rect = {0, 0, 1, 1}},
+	) or_return
+	defer if err != nil do texture_destroy()
+
+	state.vertices = make([]Vertex, MAX_VERTICES)
+	defer if err != nil do delete(state.vertices)
+
+	state.vbo = buffer_create(
+		{usage = sdl3.GPUBufferUsageFlags{.VERTEX}, size = size_of(Vertex) * MAX_VERTICES},
+	) or_return
+	defer if err != nil do buffer_destroy(&state.vbo)
+
+	state.vbo_txb = sdl3.CreateGPUTransferBuffer(
 		state.device,
-		sdl3.GPUBufferCreateInfo {
-			usage = sdl3.GPUBufferUsageFlags{.VERTEX},
-			size = size_of(Vertex) * MAX_VERTICES,
-		},
+		sdl3.GPUTransferBufferCreateInfo{usage = .UPLOAD, size = state.vbo.size},
 	)
+	if state.vbo_txb == nil {
+		log.errorf("Failed to create transfer buffer: %s", sdl3.GetError())
+		return .GPU_BUFFER
+	}
+	defer if err != nil do sdl3.ReleaseGPUTransferBuffer(state.device, state.vbo_txb)
 
-	state.ibo = sdl3.CreateGPUBuffer(
-		state.device,
-		sdl3.GPUBufferCreateInfo {
-			usage = sdl3.GPUBufferUsageFlags{.INDEX},
-			size = size_of(u16) * MAX_INDICES,
-		},
-	)
+	state.ibo = buffer_create(
+		{usage = sdl3.GPUBufferUsageFlags{.INDEX}, size = size_of(u32) * MAX_INDICES},
+	) or_return
+	defer if err != nil do buffer_destroy(&state.ibo)
 
-	index: u16 = 0
-	indices := [MAX_INDICES]u16{}
+	index: u32 = 0
+	indices := [MAX_INDICES]u32{}
 	for i := 0; i < MAX_INDICES; i += 6 {
 		indices[i + 0] = index + 0
 		indices[i + 1] = index + 1
@@ -140,7 +155,7 @@ init :: proc() -> (err: Graphics_Error) {
 		index += 4
 	}
 
-	buffer_upload(state.ibo, indices[:]) or_return
+	buffer_upload(&state.ibo, indices[:]) or_return
 
 	state.init = true
 	return nil
@@ -152,8 +167,9 @@ destroy :: proc() {
 	texture_destroy()
 
 	sdl3.ReleaseGPUSampler(state.device, state.sampler)
-	sdl3.ReleaseGPUBuffer(state.device, state.vbo)
-	sdl3.ReleaseGPUBuffer(state.device, state.ibo)
+	buffer_destroy(&state.vbo)
+	buffer_destroy(&state.ibo)
+	sdl3.ReleaseGPUTransferBuffer(state.device, state.vbo_txb)
 	sdl3.ReleaseGPUGraphicsPipeline(state.device, state.pipeline)
 	sdl3.ReleaseWindowFromGPUDevice(state.device, state.window)
 	sdl3.DestroyGPUDevice(state.device)
@@ -172,10 +188,8 @@ begin_frame :: proc(cam: Camera, cam_pos: [3]f32, cam_rot: [3]f32) {
 }
 
 end_frame :: proc() {
-	vbytes := state.vertex_count * size_of(Vertex)
-
 	if state.vertex_count > 0 {
-		buffer_upload(state.vbo, state.vertices[:state.vertex_count])
+		buffer_upload(&state.vbo, state.vertices[:state.vertex_count], state.vbo_txb)
 	}
 
 	cmd := sdl3.AcquireGPUCommandBuffer(state.device)
@@ -212,18 +226,18 @@ end_frame :: proc() {
 	sdl3.BindGPUGraphicsPipeline(pass, state.pipeline)
 
 	vbuf_binding := sdl3.GPUBufferBinding {
-		buffer = state.vbo,
+		buffer = state.vbo.handle,
 		offset = 0,
 	}
 	sdl3.BindGPUVertexBuffers(pass, 0, &vbuf_binding, 1)
 
 	ibuf_binding := sdl3.GPUBufferBinding {
-		buffer = state.ibo,
+		buffer = state.ibo.handle,
 		offset = 0,
 	}
-	sdl3.BindGPUIndexBuffer(pass, ibuf_binding, ._16BIT)
+	sdl3.BindGPUIndexBuffer(pass, ibuf_binding, ._32BIT)
 
-	vert_u := CameraUniform {
+	vert_u := Camera_Uniform {
 		mvp = calc_camera_matrix(
 			state.camera,
 			state.camera_pos,
@@ -256,13 +270,14 @@ draw_quad :: proc(
 	scale: [3]f32 = {1, 1, 1},
 	color: [4]f32 = {1, 1, 1, 1},
 	uvs: [4][2]f32 = {{0, 0}, {1, 0}, {1, 1}, {0, 1}},
-	texture: Texture_Handle = state.default_texture,
+	texture: Texture_Handle = 0,
 ) {
 	if state.vertex_count + 4 > MAX_VERTICES {
 		log.warn("Graphics quad limit reached, dropped draw")
 		return
 	}
 
+	tex := texture_slot(texture)
 	corners := [4][2]f32{{-0.5, -0.5}, {0.5, -0.5}, {0.5, 0.5}, {-0.5, 0.5}}
 
 	make_model :: proc(pos: [3]f32, rot: [3]f32, scale: [3]f32) -> matrix[4, 4]f32 {
@@ -281,10 +296,15 @@ draw_quad :: proc(
 		local := [4]f32{corners[i].x, corners[i].y, 0, 1}
 		world := model * local
 
+		tex_uv := [2]f32 {
+			tex.rect.u0 + uvs[i].x * (tex.rect.u1 - tex.rect.u0),
+			tex.rect.v0 + uvs[i].y * (tex.rect.v1 - tex.rect.v0),
+		}
+
 		state.vertices[int(state.vertex_count) + i] = Vertex {
 			color = color,
 			pos   = world.xyz,
-			uv    = uvs[i],
+			uv    = tex_uv,
 		}
 	}
 
@@ -297,7 +317,7 @@ draw_quad :: proc(
 @(private = "file")
 push_call :: proc(tex_h: Texture_Handle) {
 	n := len(state.calls)
-	tex := textures.slots[tex_h].page
+	tex := texture_slot(tex_h).page
 
 	if n > 0 {
 		last := &state.calls[n - 1]
@@ -311,140 +331,6 @@ push_call :: proc(tex_h: Texture_Handle) {
 		&state.calls,
 		Draw_Call{texture = tex, index_off = state.index_count - 6, index_count = 6},
 	)
-}
-
-@(private = "file")
-load_shader :: proc(
-	path: string,
-	stage: sdl3.GPUShaderStage,
-	num_samplers, num_uniforms: u32,
-) -> (
-	^sdl3.GPUShader,
-	Graphics_Error,
-) {
-	code, err := os.read_entire_file(path, context.allocator)
-	if err != nil do return nil, .GRAPHICS_INVALID_FILE
-	defer delete(code)
-
-	info := sdl3.GPUShaderCreateInfo {
-		code_size            = len(code),
-		code                 = raw_data(code),
-		entrypoint           = "main",
-		format               = {.SPIRV},
-		stage                = stage,
-		num_samplers         = num_samplers,
-		num_storage_textures = 0,
-		num_storage_buffers  = 0,
-		num_uniform_buffers  = num_uniforms,
-	}
-
-	shader := sdl3.CreateGPUShader(state.device, info)
-	if shader == nil {
-		log.errorf("Failed to create GPU shader: %s", sdl3.GetError())
-		return nil, .GRAPHICS_CREATE_GPU_SHADER
-	}
-
-	return shader, nil
-}
-
-@(private = "file")
-buffer_upload :: proc(buff: ^sdl3.GPUBuffer, data: []$T) -> Graphics_Error {
-	if len(data) == 0 do return .GRAPHICS_BUFFER_UPLOAD
-
-	size := len(data) * size_of(T)
-
-	transfer := sdl3.CreateGPUTransferBuffer(
-		state.device,
-		sdl3.GPUTransferBufferCreateInfo{usage = .UPLOAD, size = u32(size)},
-	)
-	if transfer == nil {
-		log.errorf("GPU Transfer Buffer create failed: %s", sdl3.GetError())
-		return .GRAPHICS_BUFFER_UPLOAD
-	}
-
-	mapped := ([^]T)(sdl3.MapGPUTransferBuffer(state.device, transfer, false))
-	copy(mapped[:len(data)], data[:])
-	sdl3.UnmapGPUTransferBuffer(state.device, transfer)
-
-	cmd := sdl3.AcquireGPUCommandBuffer(state.device)
-	copy_pass := sdl3.BeginGPUCopyPass(cmd)
-	src := sdl3.GPUTransferBufferLocation {
-		transfer_buffer = transfer,
-		offset          = 0,
-	}
-	dst := sdl3.GPUBufferRegion {
-		buffer = buff,
-		offset = 0,
-		size   = u32(size),
-	}
-
-	sdl3.UploadToGPUBuffer(copy_pass, src, dst, false)
-	sdl3.EndGPUCopyPass(copy_pass)
-	if !sdl3.SubmitGPUCommandBuffer(cmd) {
-		log.errorf("GPU Command submit failed: %s", sdl3.GetError())
-		sdl3.ReleaseGPUTransferBuffer(state.device, transfer)
-		return .GRAPHICS_BUFFER_UPLOAD
-	}
-
-	sdl3.ReleaseGPUTransferBuffer(state.device, transfer)
-	return nil
-}
-
-@(private = "file")
-create_graphics_pipeline :: proc() -> (err: Graphics_Error) {
-	vert_shader := load_shader("res/shader.vert.spv", .VERTEX, 0, 1) or_return
-	frag_shader := load_shader("res/shader.frag.spv", .FRAGMENT, 1, 0) or_return
-
-	vert_attrs := []sdl3.GPUVertexAttribute {
-		{location = 0, buffer_slot = 0, format = .FLOAT4, offset = u32(offset_of(Vertex, color))},
-		{location = 1, buffer_slot = 0, format = .FLOAT3, offset = u32(offset_of(Vertex, pos))},
-		{location = 2, buffer_slot = 0, format = .FLOAT2, offset = u32(offset_of(Vertex, uv))},
-	}
-
-	vert_buffers := []sdl3.GPUVertexBufferDescription {
-		{slot = 0, pitch = u32(size_of(Vertex)), input_rate = .VERTEX, instance_step_rate = 0},
-	}
-
-	color_target := sdl3.GPUColorTargetDescription {
-		format = sdl3.GetGPUSwapchainTextureFormat(state.device, state.window),
-		blend_state = sdl3.GPUColorTargetBlendState {
-			enable_blend = true,
-			src_color_blendfactor = .SRC_ALPHA,
-			dst_color_blendfactor = .ONE_MINUS_SRC_ALPHA,
-			color_blend_op = .ADD,
-			src_alpha_blendfactor = .ONE,
-			dst_alpha_blendfactor = .ONE_MINUS_SRC_ALPHA,
-			alpha_blend_op = .ADD,
-		},
-	}
-
-	pipeline_info := sdl3.GPUGraphicsPipelineCreateInfo {
-		vertex_shader = vert_shader,
-		fragment_shader = frag_shader,
-		vertex_input_state = sdl3.GPUVertexInputState {
-			vertex_buffer_descriptions = raw_data(vert_buffers),
-			num_vertex_buffers = u32(len(vert_buffers)),
-			vertex_attributes = raw_data(vert_attrs),
-			num_vertex_attributes = u32(len(vert_attrs)),
-		},
-		primitive_type = .TRIANGLELIST,
-		rasterizer_state = sdl3.GPURasterizerState{fill_mode = .FILL, cull_mode = .NONE},
-		target_info = sdl3.GPUGraphicsPipelineTargetInfo {
-			color_target_descriptions = &color_target,
-			num_color_targets = 1,
-		},
-	}
-
-	state.pipeline = sdl3.CreateGPUGraphicsPipeline(state.device, pipeline_info)
-	if state.pipeline == nil {
-		log.errorf("Failed to create GPU Graphic Pipeline: %s", sdl3.GetError())
-		return .GRAPHICS_CREATE_GRAPHICS_PIPELINE
-	}
-
-	sdl3.ReleaseGPUShader(state.device, vert_shader)
-	sdl3.ReleaseGPUShader(state.device, frag_shader)
-
-	return nil
 }
 
 @(private = "file")

@@ -26,7 +26,7 @@ on_event :: proc(tev: event.Thorn_Event) {
 		}
 		state.keys_down[Key(e.key)] = false
 	case event.Mouse_Move_Event:
-		state.mouse_delta = state.mouse_pos - e.pos
+		state.mouse_delta += e.pos - state.mouse_pos
 		state.mouse_pos = e.pos
 	case event.Mouse_Scroll_Event:
 		state.mouse_scroll += e.scroll

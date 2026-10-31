@@ -19,6 +19,10 @@ main :: proc() {
 		for _, leak in track.allocation_map {
 			log.infof("%v leaked %m", leak.location, leak.size)
 		}
+
+		for _, freed in track.bad_free_array {
+			log.infof("%v freed %m", freed)
+		}
 	}
 
 	err := engine.init()
@@ -28,17 +32,22 @@ main :: proc() {
 	}
 	defer engine.destroy()
 
+	tex: graphics.Texture_Handle = 0
 	for engine.tick() {
 		graphics.begin_frame(
 			{90, 10, -1, 1, {0.2, 0.5, 0.6, 1}, .ORTHOGRAPHIC},
 			{0, 0, -6},
 			{0, 0, 0},
 		)
-		graphics.draw_quad()
+		graphics.draw_quad(texture = tex)
 		graphics.end_frame()
 
 		if input.is_pressed(.ESCAPE) {
-			engine.quit()
+			break
+		}
+
+		if input.is_pressed(.R) {
+			tex = (tex + 1) % 3
 		}
 	}
 }
