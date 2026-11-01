@@ -1,5 +1,6 @@
 package input
 
+import "thorn:core"
 import "thorn:event"
 
 @(private)
@@ -7,9 +8,16 @@ state: struct {
 	keys_down:     [Key]bool,
 	keys_pressed:  [Key]bool,
 	keys_released: [Key]bool,
-	mouse_pos:     [2]f32,
-	mouse_delta:   [2]f32,
+	mouse_pos:     core.Vec2,
+	mouse_delta:   core.Vec2,
 	mouse_scroll:  f32,
+}
+
+tick :: proc() {
+	state.keys_pressed = {}
+	state.keys_released = {}
+	state.mouse_delta = {}
+	state.mouse_scroll = 0
 }
 
 on_event :: proc(tev: event.Thorn_Event) {
@@ -33,18 +41,17 @@ on_event :: proc(tev: event.Thorn_Event) {
 	}
 }
 
-tick :: proc() {
-	state.keys_pressed = {}
-	state.keys_released = {}
-	state.mouse_delta = {}
-	state.mouse_scroll = 0
-}
-
 is_down :: proc(k: Key) -> bool {return state.keys_down[k]}
 is_pressed :: proc(k: Key) -> bool {return state.keys_pressed[k]}
 is_released :: proc(k: Key) -> bool {return state.keys_released[k]}
 
-mouse_pos :: proc() -> [2]f32 {return state.mouse_pos}
-mouse_delta :: proc() -> [2]f32 {return state.mouse_delta}
+mouse_pos :: proc() -> core.Vec2 {return state.mouse_pos}
+mouse_delta :: proc() -> core.Vec2 {return state.mouse_delta}
 mouse_scroll :: proc() -> f32 {return state.mouse_scroll}
 
+get_vector :: proc(pos_x, neg_x, pos_y, neg_y: Key) -> core.Vec2 {
+	xval := int(is_down(pos_x)) - int(is_down(neg_x))
+	yval := int(is_down(pos_y)) - int(is_down(neg_y))
+
+	return {f32(xval), f32(yval)}
+}

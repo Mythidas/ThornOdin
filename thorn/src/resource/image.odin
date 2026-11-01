@@ -1,4 +1,4 @@
-package graphics
+package resource
 
 import "core:log"
 import "core:os"

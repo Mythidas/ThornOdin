@@ -22,8 +22,8 @@ state: struct {
 	handle: ^sdl3.Window,
 }
 
-init :: proc(spec: Window_Spec) -> (err: Window_Error) {
-	ensure(state.init == false, "Window.init() already called")
+initialize :: proc(spec: Window_Spec) -> (err: Window_Error) {
+	ensure(state.init == false, "Window.initialize() has already been called")
 
 	if !sdl3.Init(sdl3.InitFlags{.VIDEO}) {
 		log.errorf("Failed to init SDL: %s", sdl3.GetError())
@@ -37,16 +37,19 @@ init :: proc(spec: Window_Spec) -> (err: Window_Error) {
 		return .SDL_WINDOW
 	}
 
+	log.info("Window Initialized")
 	state.init = true
 	return nil
 }
 
-destroy :: proc() {
-	ensure(state.init, "Window.init() needs to be called")
+terminate :: proc() {
+	ensure(state.init, "Window.initialize() needs to be called")
 
 	sdl3.DestroyWindow(state.handle)
 	sdl3.QuitSubSystem(sdl3.InitFlags{.VIDEO})
 	state = {}
+
+	log.info("Window Terminated")
 }
 
 tick :: proc(handler: proc(e: event.Thorn_Event)) {

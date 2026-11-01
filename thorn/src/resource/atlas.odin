@@ -1,6 +1,5 @@
-package graphics
+package resource
 
-import "core:log"
 import stbrp "vendor:stb/rect_pack"
 
 @(private = "file")
@@ -12,8 +11,6 @@ Atlas_Entry :: struct {
 }
 
 Atlas :: struct {
-	w, h:    int,
-	padding: int,
 	pixels:  []byte,
 	entries: [dynamic]Atlas_Entry,
 }
@@ -44,7 +41,7 @@ atlas_pack :: proc(
 	}
 
 	stbrp.init_target(&stb_ctx, i32(w), i32(h), raw_data(nodes), i32(w))
-	result := stbrp.pack_rects(&stb_ctx, raw_data(rects), i32(len(rects)))
+	_ = stbrp.pack_rects(&stb_ctx, raw_data(rects), i32(len(rects)))
 
 	for r in rects {
 		if !r.was_packed {
@@ -63,9 +60,9 @@ atlas_pack :: proc(
 			},
 		)
 
-		log.infof("IMAGE: %v | %v", images[r.id].path, r)
-		for row in 0 ..< int(r.h) {
-			src := images[r.id].pixels[row * int(r.w) * CHANNELS:][:r.w * CHANNELS]
+		for row in 0 ..< int(r.h) - padding {
+			img := &images[r.id]
+			src := img.pixels[row * int(img.w) * CHANNELS:][:img.w * CHANNELS]
 			dst_off := ((int(r.y) + row) * w + int(r.x)) * CHANNELS
 			copy(atlas.pixels[dst_off:], src)
 		}
@@ -74,10 +71,10 @@ atlas_pack :: proc(
 	return atlas, unpacked
 }
 
-atlas_destroy :: proc(atlas: ^Atlas) {
+atlas_destroy :: proc(atlas: ^Atlas, allocator := context.allocator) {
 	if atlas == nil do return
 
-	delete(atlas.pixels)
+	delete(atlas.pixels, allocator)
 	delete(atlas.entries)
 	atlas^ = {}
 }

@@ -1,150 +1,97 @@
 package graphics
 
 import "core:log"
-import "core:strings"
+import "thorn:core"
 import "vendor:sdl3"
 
-@(private)
-ATLAS_SIZE :: 2048
-
+Page_Handle :: distinct int
 Texture_Handle :: distinct int
 
 @(private)
-Texture_Rect :: struct {
-	u0, v0: f32,
-	u1, v1: f32,
+Texture_Slot :: struct {
+	size: core.IVec2,
+	rect: core.Rect,
+	page: Page_Handle,
 }
 
 @(private)
-Texture_Slot :: struct {
-	page: ^sdl3.GPUTexture,
-	size: [2]int,
-	rect: Texture_Rect,
+Page_Slot :: struct {
+	tex:  ^sdl3.GPUTexture,
+	size: core.IVec2,
 }
 
 @(private = "file")
 textures: struct {
-	slots:     [dynamic]Texture_Slot,
-	by_path:   map[string]Texture_Handle,
-	asset_dir: string,
+	pages: [dynamic]Page_Slot,
+	slots: [dynamic]Texture_Slot,
+}
+
+page_create :: proc(pixels: [^]u8, w, h: int) -> (ph: Page_Handle, err: Graphics_Error) {
+	tex := texture_create_from_pixels(pixels, w, h) or_return
+	page := Page_Handle(len(textures.pages))
+	append(&textures.pages, Page_Slot{tex = tex, size = {w, h}})
+
+	return page, nil
+}
+
+texture_create :: proc(page_handle: Page_Handle, x, y, w, h: int) -> Texture_Handle {
+	page := textures.pages[page_handle]
+
+	tex := Texture_Handle(len(textures.slots))
+	append(
+		&textures.slots,
+		Texture_Slot {
+			page = page_handle,
+			size = {w, h},
+			rect = {
+				f32(x) / f32(page.size.x),
+				f32(y) / f32(page.size.y),
+				f32(x + w) / f32(page.size.x),
+				f32(y + h) / f32(page.size.y),
+			},
+		},
+	)
+
+	return tex
 }
 
 @(private)
-texture_init :: proc(asset_dir: string) -> (err: Graphics_Error) {
-	textures.asset_dir = strings.clone(asset_dir)
+texture_initialize :: proc() -> (err: Graphics_Error) {
+	defer if err != nil {
+		log.errorf("Failed to initialize textures")
+		texture_terminate()
+	}
+
+	textures.pages = make([dynamic]Page_Slot)
+	textures.slots = make([dynamic]Texture_Slot)
 
 	dtex_pixels := []u8{255, 0, 255, 255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 0, 255, 255}
 	default_tex := texture_create_from_pixels(raw_data(dtex_pixels), 2, 2) or_return
-	defer if err != nil do sdl3.ReleaseGPUTexture(state.device, default_tex)
 
-	append(&textures.slots, Texture_Slot{page = default_tex, size = {2, 2}, rect = {0, 0, 1, 1}})
-
-	images := image_find_all(asset_dir)
-	if len(images) == 0 do return nil
-	defer image_destroy_all(images)
-
-	image_slice := make([]Image, len(images))
-	copy_slice(image_slice, images)
-	defer delete(image_slice)
-
-	dir_slash := asset_dir[len(asset_dir) - 1] != '/'
-	for {
-		atlas, unpacked := atlas_pack(ATLAS_SIZE, ATLAS_SIZE, image_slice)
-		defer atlas_destroy(&atlas)
-		defer delete(unpacked)
-
-		if len(atlas.entries) == 0 {
-			log.infof("Files to large to pack: %v", len(unpacked))
-			break
-		}
-
-		tex, e := texture_create_from_pixels(raw_data(atlas.pixels), ATLAS_SIZE, ATLAS_SIZE)
-		if e != nil do return .GPU_TEXTURE
-
-		for entry in atlas.entries {
-			img := &image_slice[entry.image]
-			index := strings.index(img.path, asset_dir) + len(asset_dir) + int(dir_slash)
-			path := strings.concatenate({"res://", img.path[index:]})
-
-			textures.by_path[path] = Texture_Handle(len(textures.slots))
-			append(
-				&textures.slots,
-				Texture_Slot {
-					page = tex,
-					size = {img.w, img.h},
-					rect = {
-						f32(entry.x) / ATLAS_SIZE,
-						f32(entry.y) / ATLAS_SIZE,
-						f32(entry.x + entry.w) / ATLAS_SIZE,
-						f32(entry.y + entry.h) / ATLAS_SIZE,
-					},
-				},
-			)
-		}
-
-		if len(unpacked) == 0 do break
-
-		delete(image_slice)
-		image_slice = make([]Image, len(unpacked))
-		for i, idx in unpacked {
-			image_slice[idx] = images[i]
-		}
-	}
-
+	append(&textures.pages, Page_Slot{tex = default_tex, size = {2, 2}})
+	append(&textures.slots, Texture_Slot{page = 0, size = {2, 2}, rect = {0, 0, 1, 1}})
 	return nil
 }
 
 @(private)
-texture_destroy :: proc() {
-	seen: map[^sdl3.GPUTexture]struct{}
-	defer delete(seen)
-
-	for &ts in textures.slots {
-		if _, ok := seen[ts.page]; !ok {
-			sdl3.ReleaseGPUTexture(state.device, ts.page)
-			seen[ts.page] = {}
-		}
+texture_terminate :: proc() {
+	for &v in textures.pages {
+		sdl3.ReleaseGPUTexture(state.device, v.tex)
 	}
 
-	for k, _ in textures.by_path {
-		delete(k)
-	}
-
+	delete(textures.pages)
 	delete(textures.slots)
-	delete(textures.by_path)
-	delete(textures.asset_dir)
-}
-
-texture_find :: proc(path: string) -> Texture_Handle {
-	th, ok := textures.by_path[path]
-	if ok do return th
-	else do return 0
+	textures = {}
 }
 
 @(private)
-texture_load :: proc(path: string) -> (th: Texture_Handle, err: Graphics_Error) {
-	if h := texture_find(path); h != 0 do return h, nil
-
-	img, ok := image_load(path)
-	if !ok do return -1, .GPU_TEXTURE
-	defer image_destroy(&img)
-
-	tex := texture_create_from_pixels(raw_data(img.pixels), img.w, img.h) or_return
-	tex_handle := Texture_Handle(len(textures.slots))
-	append(&textures.slots, Texture_Slot{page = tex, size = {img.w, img.h}, rect = {0, 0, 1, 1}})
-
-	dir_slash := textures.asset_dir[len(textures.asset_dir) - 1] != '/'
-	index := strings.index(img.path, textures.asset_dir) + len(textures.asset_dir) + int(dir_slash)
-	path := strings.concatenate({"res://", img.path[index:]})
-	textures.by_path[path] = tex_handle
-
-	return tex_handle, nil
+texture_find :: proc(handle: Texture_Handle) -> Texture_Slot {
+	return textures.slots[handle]
 }
 
 @(private)
-texture_slot :: proc(th: Texture_Handle) -> Texture_Slot {
-	if th < 0 || int(th) >= len(textures.slots) do return textures.slots[0]
-	return textures.slots[th]
+texture_find_page :: proc(handle: Page_Handle) -> Page_Slot {
+	return textures.pages[handle]
 }
 
 @(private)

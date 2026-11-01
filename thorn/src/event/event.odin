@@ -1,5 +1,7 @@
 package event
 
+import "thorn:core"
+
 Window_Close_Event :: struct {}
 Window_Resize_Event :: struct {
 	width:  i32,
@@ -15,7 +17,7 @@ Key_Release_Event :: struct {
 }
 
 Mouse_Move_Event :: struct {
-	pos: [2]f32,
+	pos: core.Vec2,
 }
 Mouse_Scroll_Event :: struct {
 	scroll: f32,

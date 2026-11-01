@@ -1,10 +1,16 @@
 package graphics
 
-import "thorn:window"
+/*
+	Graphics renderer.
+	Images:
+		- Image: Physical Representation on Disk
+		- Texture: Physical Representation on GPU
+		- Sprite: Logical view of Texture
+*/
 
 import "core:log"
-import "core:math/linalg"
-
+import "thorn:core"
+import "thorn:window"
 import "vendor:sdl3"
 
 MAX_QUADS :: 10_000
@@ -23,26 +29,13 @@ Graphics_Error :: enum {
 }
 
 Vertex :: struct {
-	pos:   [3]f32,
-	color: [4]f32,
-	uv:    [2]f32,
-}
-
-Camera_Projection :: enum {
-	ORTHOGRAPHIC,
-	PERSPECTIVE,
-}
-
-Camera :: struct {
-	fov:         f32,
-	zoom:        f32,
-	near, far:   f32,
-	clear_color: [4]f32,
-	mode:        Camera_Projection,
+	pos:   core.Vec3,
+	color: core.Color,
+	uv:    core.Vec2,
 }
 
 Camera_Uniform :: struct {
-	mvp: matrix[4, 4]f32,
+	mvp: core.Mat4,
 }
 
 Draw_Call :: struct {
@@ -53,29 +46,28 @@ Draw_Call :: struct {
 
 @(private)
 state: struct {
-	init:         bool,
-	window:       ^sdl3.Window,
-	device:       ^sdl3.GPUDevice,
-	pipeline:     ^sdl3.GPUGraphicsPipeline,
-	vbo:          GPU_Buffer,
-	ibo:          GPU_Buffer,
-	vbo_txb:      ^sdl3.GPUTransferBuffer,
-	sampler:      ^sdl3.GPUSampler,
-	calls:        [dynamic]Draw_Call,
+	init:             bool,
+	window:           ^sdl3.Window,
+	device:           ^sdl3.GPUDevice,
+	pipeline:         ^sdl3.GPUGraphicsPipeline,
+	vbo:              GPU_Buffer,
+	ibo:              GPU_Buffer,
+	vbo_txb:          ^sdl3.GPUTransferBuffer,
+	sampler:          ^sdl3.GPUSampler,
+	calls:            [dynamic]Draw_Call,
 
 	// CPU buffer
-	vertices:     []Vertex,
-	vertex_count: u32,
-	index_count:  u32,
+	vertices:         []Vertex,
+	vertex_count:     u32,
+	index_count:      u32,
 
 	// Runtime
-	camera:       Camera,
-	camera_pos:   [3]f32,
-	camera_rot:   [3]f32,
+	camera:           Camera,
+	camera_transform: core.Transform,
 }
 
-init :: proc() -> (err: Graphics_Error) {
-	ensure(state.init == false, "Graphics.init() already called")
+initialize :: proc() -> (err: Graphics_Error) {
+	ensure(state.init == false, "Graphics.initialize() already called")
 
 	state.window = window.get_native()
 	if state.window == nil do return .INVALID_WINDOW
@@ -109,8 +101,8 @@ init :: proc() -> (err: Graphics_Error) {
 	)
 	defer if err != nil do sdl3.ReleaseGPUSampler(state.device, state.sampler)
 
-	texture_init("/home/mythidas/Source/thorn/res") or_return
-	defer if err != nil do texture_destroy()
+	texture_initialize() or_return
+	defer if err != nil do texture_terminate()
 
 	state.vertices = make([]Vertex, MAX_VERTICES)
 	defer if err != nil do delete(state.vertices)
@@ -150,16 +142,17 @@ init :: proc() -> (err: Graphics_Error) {
 
 	buffer_upload(&state.ibo, indices[:]) or_return
 
+	log.info("Graphics Initialized")
 	state.init = true
 	return nil
 }
 
-destroy :: proc() {
-	ensure(state.init, "Graphics.init() needs to be called")
+terminate :: proc() {
+	ensure(state.init, "Graphics.initialize() needs to be called")
 
 	delete(state.calls)
 	delete(state.vertices)
-	texture_destroy()
+	texture_terminate()
 
 	sdl3.ReleaseGPUSampler(state.device, state.sampler)
 	buffer_destroy(&state.vbo)
@@ -171,14 +164,15 @@ destroy :: proc() {
 
 	state.init = false
 	state = {}
+
+	log.info("Graphics Terminated")
 }
 
-begin_frame :: proc(cam: Camera, cam_pos: [3]f32, cam_rot: [3]f32) {
+begin_frame :: proc(cam: Camera, cam_transform: core.Transform) {
 	state.vertex_count = 0
 	state.index_count = 0
 	state.camera = cam
-	state.camera_pos = cam_pos
-	state.camera_rot = cam_rot
+	state.camera_transform = cam_transform
 
 	clear(&state.calls)
 }
@@ -234,10 +228,9 @@ end_frame :: proc() {
 	sdl3.BindGPUIndexBuffer(pass, ibuf_binding, ._32BIT)
 
 	vert_u := Camera_Uniform {
-		mvp = calc_camera_matrix(
+		mvp = camera_calculate_matrix(
 			state.camera,
-			state.camera_pos,
-			state.camera_rot,
+			state.camera_transform,
 			f32(swap_tex_w),
 			f32(swap_tex_h),
 		),
@@ -260,12 +253,25 @@ end_frame :: proc() {
 	}
 }
 
+draw_sprite :: proc(
+	transform: core.Transform,
+	color: core.Color = {1, 1, 1, 1},
+	sprite: Sprite_View,
+) {
+	uvs := [4]core.Vec2 {
+		{sprite.uvs.x_min, sprite.uvs.y_min},
+		{sprite.uvs.x_max, sprite.uvs.y_min},
+		{sprite.uvs.x_max, sprite.uvs.y_max},
+		{sprite.uvs.x_min, sprite.uvs.y_max},
+	}
+
+	draw_quad(transform, color, uvs, sprite.texture)
+}
+
 draw_quad :: proc(
-	pos: [3]f32 = {0, 0, 0},
-	rot: [3]f32 = {0, 0, 0},
-	scale: [3]f32 = {1, 1, 1},
-	color: [4]f32 = {1, 1, 1, 1},
-	uvs: [4][2]f32 = {{0, 0}, {1, 0}, {1, 1}, {0, 1}},
+	transform: core.Transform,
+	color: core.Color = {1, 1, 1, 1},
+	uvs: [4]core.Vec2 = {{0, 0}, {1, 0}, {1, 1}, {0, 1}},
 	texture: Texture_Handle = 0,
 ) {
 	if state.vertex_count + 4 > MAX_VERTICES {
@@ -273,28 +279,18 @@ draw_quad :: proc(
 		return
 	}
 
-	tex := texture_slot(texture)
-	corners := [4][2]f32{{-0.5, -0.5}, {0.5, -0.5}, {0.5, 0.5}, {-0.5, 0.5}}
+	tex := texture_find(texture)
+	corners := [4]core.Vec2{{-0.5, -0.5}, {0.5, -0.5}, {0.5, 0.5}, {-0.5, 0.5}}
 
-	make_model :: proc(pos: [3]f32, rot: [3]f32, scale: [3]f32) -> matrix[4, 4]f32 {
-		return(
-			linalg.matrix4_translate(pos) *
-			linalg.matrix4_rotate(linalg.to_radians(rot.x), [3]f32{1, 0, 0}) *
-			linalg.matrix4_rotate(linalg.to_radians(rot.y), [3]f32{0, 1, 0}) *
-			linalg.matrix4_rotate(linalg.to_radians(rot.z), [3]f32{0, 0, 1}) *
-			linalg.matrix4_scale(scale) \
-		)
-	}
-
-	model := make_model(pos, rot, scale)
+	model := core.transform_matrix(transform)
 
 	for i in 0 ..< 4 {
-		local := [4]f32{corners[i].x, corners[i].y, 0, 1}
+		local := core.Vec4{corners[i].x, corners[i].y, 0, 1}
 		world := model * local
 
-		tex_uv := [2]f32 {
-			tex.rect.u0 + uvs[i].x * (tex.rect.u1 - tex.rect.u0),
-			tex.rect.v0 + uvs[i].y * (tex.rect.v1 - tex.rect.v0),
+		tex_uv := core.Vec2 {
+			tex.rect.x_min + uvs[i].x * (tex.rect.x_max - tex.rect.x_min),
+			tex.rect.y_min + uvs[i].y * (tex.rect.y_max - tex.rect.y_min),
 		}
 
 		state.vertices[int(state.vertex_count) + i] = Vertex {
@@ -313,7 +309,7 @@ draw_quad :: proc(
 @(private = "file")
 push_call :: proc(tex_h: Texture_Handle) {
 	n := len(state.calls)
-	tex := texture_slot(tex_h).page
+	tex := texture_find_page(texture_find(tex_h).page).tex
 
 	if n > 0 {
 		last := &state.calls[n - 1]
@@ -329,24 +325,3 @@ push_call :: proc(tex_h: Texture_Handle) {
 	)
 }
 
-@(private = "file")
-calc_camera_matrix :: proc(cam: Camera, pos: [3]f32, rot: [3]f32, w, h: f32) -> matrix[4, 4]f32 {
-	aspect: f32 = w / h
-
-	mat := linalg.MATRIX4F32_IDENTITY
-	if cam.mode == .PERSPECTIVE {
-		mat = linalg.matrix4_perspective(linalg.to_radians(cam.fov), aspect, cam.near, cam.far)
-	} else {
-		half_h: f32 = cam.zoom * 0.5
-		half_w: f32 = half_h * aspect
-		mat = linalg.matrix_ortho3d(-half_w, half_w, -half_h, half_h, cam.near, cam.far)
-	}
-
-	return(
-		mat *
-		linalg.matrix4_translate(pos) *
-		linalg.matrix4_rotate(linalg.to_radians(rot.x), [3]f32{1, 0, 0}) *
-		linalg.matrix4_rotate(linalg.to_radians(rot.y), [3]f32{0, 1, 0}) *
-		linalg.matrix4_rotate(linalg.to_radians(rot.z), [3]f32{0, 0, 1}) \
-	)
-}
