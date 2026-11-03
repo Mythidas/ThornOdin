@@ -253,16 +253,12 @@ end_frame :: proc() {
 	}
 }
 
-draw_sprite :: proc(
-	transform: core.Transform,
-	color: core.Color = {1, 1, 1, 1},
-	sprite: Sprite_View,
-) {
+draw_sprite :: proc(transform: core.Transform, color: core.Color = {1, 1, 1, 1}, sprite: Sprite) {
 	uvs := [4]core.Vec2 {
-		{sprite.uvs.x_min, sprite.uvs.y_min},
-		{sprite.uvs.x_max, sprite.uvs.y_min},
-		{sprite.uvs.x_max, sprite.uvs.y_max},
-		{sprite.uvs.x_min, sprite.uvs.y_max},
+		{sprite.rect.x_min, sprite.rect.y_min},
+		{sprite.rect.x_max, sprite.rect.y_min},
+		{sprite.rect.x_max, sprite.rect.y_max},
+		{sprite.rect.x_min, sprite.rect.y_max},
 	}
 
 	draw_quad(transform, color, uvs, sprite.texture)

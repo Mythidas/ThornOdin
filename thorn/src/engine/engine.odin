@@ -17,10 +17,11 @@ Engine_Error :: union #shared_nil {
 
 @(private)
 state: struct {
-	init:       bool,
-	running:    bool,
-	last_frame: time.Tick,
-	delta_time: f64,
+	init:         bool,
+	running:      bool,
+	last_frame:   time.Tick,
+	delta_time:   f64,
+	elapsed_time: f64,
 }
 
 initialize :: proc() -> (err: Engine_Error) {
@@ -58,6 +59,7 @@ tick :: proc() -> bool {
 	assert(state.init, "Engine.init() needs to be called")
 
 	state.delta_time = time.duration_seconds(time.tick_since(state.last_frame))
+	state.elapsed_time += state.delta_time
 
 	input.tick()
 	window.tick(window_event_handler)
@@ -68,6 +70,10 @@ tick :: proc() -> bool {
 
 delta_time :: proc() -> f32 {
 	return f32(state.delta_time)
+}
+
+elapsed_time :: proc() -> f32 {
+	return f32(state.elapsed_time)
 }
 
 @(private)
