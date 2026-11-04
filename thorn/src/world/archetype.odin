@@ -8,10 +8,13 @@ SIG_WORDS :: 4
 @(private)
 MAX_ARCH_COMPONENTS :: SIG_WORDS * 64
 
-Entity_ID :: u64
-Entity_Index :: int
-Entity_Gen :: u32
-Component_ID :: int
+Entity_Index :: distinct int
+Entity_Gen :: distinct u32
+Entity_ID :: struct {
+	index: Entity_Index,
+	gen:   Entity_Gen,
+}
+Component_ID :: distinct int
 
 // Non-nil address handed out for zero-sized components (tags)
 @(private)
@@ -230,6 +233,6 @@ arch_sig_next :: proc "contextless" (it: ^Arch_Sig_Iter) -> (id: Component_ID, o
 	}
 	b := int(intrinsics.count_trailing_zeros(it.bits))
 	it.bits &= it.bits - 1
-	return it.word * 64 + b, true
+	return Component_ID(it.word * 64 + b), true
 }
 

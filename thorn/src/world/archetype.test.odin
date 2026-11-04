@@ -160,7 +160,7 @@ make_test_archetype :: proc(count: int) -> Archetype {
 	)
 
 	for i in 1 ..< count + 1 {
-		row := arch_add_row(&arch, i)
+		row := arch_add_row(&arch, Entity_Index(i))
 		c_a := cast(^TComponentA)arch_get_component(&arch, row, 0)
 		c_b := cast(^TComponentB)arch_get_component(&arch, row, 1)
 		ensure(c_a != nil && c_b != nil, "Get Component failed to return a valid ptr")

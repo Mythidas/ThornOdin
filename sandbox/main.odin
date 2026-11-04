@@ -9,6 +9,7 @@ import "thorn:graphics"
 import "thorn:input"
 import "thorn:resource"
 import "thorn:world"
+import "vendor:box2d"
 
 Player_Anim :: enum {
 	IDLE_N,
@@ -17,15 +18,32 @@ Player_Anim :: enum {
 	IDLE_W,
 }
 
-player: struct {
-	transform: core.Transform,
-	animator:  graphics.Animator,
-	anim_set:  graphics.Anim_Clip_Set,
+anim_set: graphics.Anim_Clip_Set
+
+Player :: struct {}
+Player_View :: struct {
+	tags:       []Player,
+	transforms: []core.Transform,
+	anims:      []graphics.Animator,
 }
 
-camera: struct {
-	camera:    graphics.Camera,
-	transform: core.Transform,
+player_move :: proc(view: Player_View, dt: f32) {
+	dir := input.get_vector(.D, .A, .W, .S)
+	if dir == {0, 0} do return
+
+	for &t, i in view.transforms {
+		t.position.xy += linalg.normalize(dir) * 2.5 * dt
+
+		if dir.x > 0 {
+			graphics.animator_play(&view.anims[i], int(Player_Anim.IDLE_E))
+		} else if dir.x < 0 {
+			graphics.animator_play(&view.anims[i], int(Player_Anim.IDLE_W))
+		} else if dir.y > 0 {
+			graphics.animator_play(&view.anims[i], int(Player_Anim.IDLE_N))
+		} else {
+			graphics.animator_play(&view.anims[i], int(Player_Anim.IDLE_S))
+		}
+	}
 }
 
 main :: proc() {
@@ -47,16 +65,48 @@ main :: proc() {
 		}
 	}
 
-	err := engine.initialize()
+	err := engine.initialize({fixed_step = 1.0 / 60.0})
 	if err != nil {
 		log.errorf("Thorn failed to init: %v", err)
 		return
 	}
 	defer engine.terminate()
-	defer delete(player.anim_set.clips)
+
+	anim_set.clips = make([dynamic]graphics.Anim_Clip)
+	defer delete(anim_set.clips)
 
 	scene := world.scene_create()
 	defer world.scene_destroy(&scene)
+
+	engine.register_system(engine.system_query_helper(Player_View, .UPDATE, player_move))
+
+	append(
+		&anim_set.clips,
+		graphics.Anim_Clip{resource.load_sprite("res://IDLE/idle_up.png"), 8, {8, 1}, true},
+	)
+	append(
+		&anim_set.clips,
+		graphics.Anim_Clip{resource.load_sprite("res://IDLE/idle_down.png"), 8, {8, 1}, true},
+	)
+	append(
+		&anim_set.clips,
+		graphics.Anim_Clip{resource.load_sprite("res://IDLE/idle_right.png"), 8, {8, 1}, true},
+	)
+	append(
+		&anim_set.clips,
+		graphics.Anim_Clip{resource.load_sprite("res://IDLE/idle_left.png"), 8, {8, 1}, true},
+	)
+
+	p1 := world.scene_create_enity(&scene)
+	p1_t := world.scene_add_component(&scene, p1, core.Transform)
+	p1_t.scale = {1, 1, 1}
+
+	p1_anim := world.scene_add_component(&scene, p1, graphics.Animator)
+	p1_anim.set = &anim_set
+	graphics.animator_play(p1_anim, int(Player_Anim.IDLE_S))
+	world.scene_add_component(&scene, p1, Player)
+
+	world.scene_add_component(&scene, p1, graphics.Sprite)
 
 	ents := [3]world.Entity_ID{}
 	for i in 0 ..< 3 {
@@ -69,85 +119,54 @@ main :: proc() {
 		s.rect = {0, 0, 1, 1}
 	}
 
-	camera.camera.clear_color = {0.2, 0.5, 0.6, 1}
-	camera.camera.mode = .ORTHOGRAPHIC
-	camera.camera.near = -1
-	camera.camera.far = 1
-	camera.camera.fov = 90
-	camera.camera.zoom = 5
-	camera.transform.position.z = -6
-	camera.transform.scale = {1, 1, 1}
-
-	append(
-		&player.anim_set.clips,
-		graphics.Anim_Clip{resource.load_sprite("res://IDLE/idle_up.png"), 8, {8, 1}, true},
-	)
-	append(
-		&player.anim_set.clips,
-		graphics.Anim_Clip{resource.load_sprite("res://IDLE/idle_down.png"), 8, {8, 1}, true},
-	)
-	append(
-		&player.anim_set.clips,
-		graphics.Anim_Clip{resource.load_sprite("res://IDLE/idle_right.png"), 8, {8, 1}, true},
-	)
-	append(
-		&player.anim_set.clips,
-		graphics.Anim_Clip{resource.load_sprite("res://IDLE/idle_left.png"), 8, {8, 1}, true},
-	)
-
-	player.transform.scale = {1, 1, 1}
-
-	player.animator.set = &player.anim_set
-	graphics.animator_play(&player.animator, int(Player_Anim.IDLE_S))
-
-	Tester :: struct {
-		t: []core.Transform,
-		s: []graphics.Sprite,
+	cam := world.scene_create_enity(&scene)
+	c := world.scene_add_component(&scene, cam, graphics.Camera)
+	c^ = {
+		clear_color = {0.2, 0.5, 0.6, 1},
+		mode        = .ORTHOGRAPHIC,
+		near        = -1,
+		far         = 1,
+		zoom        = 5,
 	}
+	cam_t := world.scene_add_component(&scene, cam, core.Transform)
+	cam_t.position.z = -6
+	cam_t.scale = {1, 1, 1}
 
-	q: world.Scene_Query
-	q = world.query_create(&scene, Tester)
-	defer world.query_destroy(&q)
+	engine.set_active_scene(&scene)
 
 	for engine.tick() {
-		// Scene Testing
-		world.query_refresh(&q, &scene)
-		world.query_reset(&q)
-
-		graphics.begin_frame(camera.camera, camera.transform)
-		graphics.draw_sprite(
-			transform = player.transform,
-			sprite = graphics.animator_get_sprite(&player.animator),
-		)
-
-		for m in world.query_next(&q, Tester) {
-			for &t, i in m.t {
-				t.position.x = linalg.sin(f32(engine.elapsed_time())) * f32(i + 1)
-				graphics.draw_sprite(transform = t, sprite = m.s[i])
-			}
-		}
-
-		graphics.end_frame()
-
 		if input.is_pressed(.ESCAPE) {
 			break
 		}
-
-		graphics.animator_update(&player.animator, engine.delta_time())
-		dir := input.get_vector(.D, .A, .W, .S)
-		if dir != {0, 0} {
-			player.transform.position.xy += linalg.normalize(dir) * 2.5 * engine.delta_time()
-
-			if dir.x > 0 {
-				graphics.animator_play(&player.animator, int(Player_Anim.IDLE_E))
-			} else if dir.x < 0 {
-				graphics.animator_play(&player.animator, int(Player_Anim.IDLE_W))
-			} else if dir.y > 0 {
-				graphics.animator_play(&player.animator, int(Player_Anim.IDLE_N))
-			} else {
-				graphics.animator_play(&player.animator, int(Player_Anim.IDLE_S))
-			}
-		}
-
 	}
+}
+
+box2aa :: proc() {
+	world_def := box2d.DefaultWorldDef()
+	world_def.gravity = {0, -10.0}
+	world_id := box2d.CreateWorld(world_def)
+	defer box2d.DestroyWorld(world_id)
+
+	ground_def := box2d.DefaultBodyDef()
+	ground_def.position = {0, -10}
+	ground_id := box2d.CreateBody(world_id, ground_def)
+	defer box2d.DestroyBody(ground_id)
+
+	ground_box := box2d.MakeBox(50, 10)
+	ground_shape_def := box2d.DefaultShapeDef()
+	ground_shape := box2d.CreatePolygonShape(ground_id, ground_shape_def, &ground_box)
+	defer box2d.DestroyShape(ground_shape, true)
+
+	body_def := box2d.DefaultBodyDef()
+	body_def.type = .dynamicBody
+	body_def.position = {0, 4}
+	body_id := box2d.CreateBody(world_id, body_def)
+	defer box2d.DestroyBody(body_id)
+
+	body_box := box2d.MakeBox(1, 1)
+	body_shape_def := box2d.DefaultShapeDef()
+	body_shape_def.density = 1
+	body_shape_def.material.friction = 0.3
+	body_shape := box2d.CreatePolygonShape(body_id, body_shape_def, &body_box)
+	defer box2d.DestroyShape(body_shape, true)
 }

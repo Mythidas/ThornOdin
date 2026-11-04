@@ -1,6 +1,6 @@
 package world
 
-Entity :: struct {
+Entity_Slot :: struct {
 	arch: int,
 	row:  int,
 	gen:  Entity_Gen,
@@ -16,7 +16,7 @@ EMPTY_ARCH :: 0
 
 @(private)
 Registry :: struct {
-	entities:        [dynamic]Entity,
+	entities:        [dynamic]Entity_Slot,
 	components:      map[typeid]Component,
 	component_sizes: [dynamic]int, // indexed by Component_ID
 	archetypes:      [dynamic]Archetype,
@@ -26,7 +26,7 @@ Registry :: struct {
 
 @(private)
 registry_create :: proc(allocator := context.allocator) -> (reg: Registry) {
-	reg.entities = make([dynamic]Entity, allocator)
+	reg.entities = make([dynamic]Entity_Slot, allocator)
 	reg.components = make(map[typeid]Component, allocator)
 	reg.component_sizes = make([dynamic]int, allocator)
 	reg.archetypes = make([dynamic]Archetype, allocator)
@@ -61,23 +61,22 @@ registry_create_entity :: proc(r: ^Registry) -> Entity_ID {
 	if len(r.free_entities) > 0 {
 		index = pop(&r.free_entities)
 	} else {
-		index = len(r.entities)
-		append(&r.entities, Entity{-1, -1, 0})
+		index = Entity_Index(len(r.entities))
+		append(&r.entities, Entity_Slot{-1, -1, 0})
 	}
 
 	ent := &r.entities[index]
 	ent.arch = EMPTY_ARCH
 	ent.row = arch_add_row(&r.archetypes[EMPTY_ARCH], index)
 
-	return pack_entity_id(u32(index), ent.gen)
+	return Entity_ID{index, ent.gen}
 }
 
 @(private)
 registry_destroy_entity :: proc(r: ^Registry, id: Entity_ID) {
-	idx, gen := unpack_entity_id(id)
-	if !is_valid_entity_id(r, idx, gen) do return
+	if !is_valid_entity_id(r, id) do return
 
-	ent := &r.entities[idx]
+	ent := &r.entities[id.index]
 
 	if ent.arch != -1 && ent.row != -1 {
 		arch := &r.archetypes[ent.arch]
@@ -89,15 +88,14 @@ registry_destroy_entity :: proc(r: ^Registry, id: Entity_ID) {
 	ent.arch = -1
 	ent.row = -1
 	ent.gen += 1
-	append(&r.free_entities, idx)
+	append(&r.free_entities, id.index)
 }
 
 @(private)
 registry_add_component :: proc(r: ^Registry, id: Entity_ID, $T: typeid) -> ^T {
-	idx, gen := unpack_entity_id(id)
-	if !is_valid_entity_id(r, idx, gen) do return nil
+	if !is_valid_entity_id(r, id) do return nil
 
-	ent := &r.entities[idx]
+	ent := &r.entities[id.index]
 	if ent.arch == -1 || ent.row == -1 do return nil
 
 	cid := get_or_create_component_id(r, T, size_of(T))
@@ -121,10 +119,9 @@ registry_add_component :: proc(r: ^Registry, id: Entity_ID, $T: typeid) -> ^T {
 
 @(private)
 registry_get_component :: proc(r: ^Registry, id: Entity_ID, $T: typeid) -> ^T {
-	idx, gen := unpack_entity_id(id)
-	if !is_valid_entity_id(r, idx, gen) do return nil
+	if !is_valid_entity_id(r, id) do return nil
 
-	ent := &r.entities[idx]
+	ent := &r.entities[id.index]
 	if ent.arch == -1 || ent.row == -1 do return nil
 
 	cid, ok := get_component_id(r, T)
@@ -135,10 +132,9 @@ registry_get_component :: proc(r: ^Registry, id: Entity_ID, $T: typeid) -> ^T {
 
 @(private)
 registry_has_component :: proc(r: ^Registry, id: Entity_ID, $T: typeid) -> bool {
-	idx, gen := unpack_entity_id(id)
-	if !is_valid_entity_id(r, idx, gen) do return false
+	if !is_valid_entity_id(r, id) do return false
 
-	ent := &r.entities[idx]
+	ent := &r.entities[id.index]
 	if ent.arch == -1 do return false
 
 	cid, ok := get_component_id(r, T)
@@ -147,10 +143,9 @@ registry_has_component :: proc(r: ^Registry, id: Entity_ID, $T: typeid) -> bool 
 
 @(private)
 registry_remove_component :: proc(r: ^Registry, id: Entity_ID, $T: typeid) {
-	idx, gen := unpack_entity_id(id)
-	if !is_valid_entity_id(r, idx, gen) do return
+	if !is_valid_entity_id(r, id) do return
 
-	ent := &r.entities[idx]
+	ent := &r.entities[id.index]
 	if ent.arch == -1 || ent.row == -1 do return
 
 	cid, ok := get_component_id(r, T)
@@ -173,7 +168,7 @@ registry_remove_component :: proc(r: ^Registry, id: Entity_ID, $T: typeid) {
 
 @(private)
 registry_entity_id :: proc(r: ^Registry, idx: Entity_Index) -> Entity_ID {
-	return pack_entity_id(u32(idx), r.entities[idx].gen)
+	return {idx, r.entities[idx].gen}
 }
 
 @(private)
@@ -182,6 +177,26 @@ get_component_id :: proc(r: ^Registry, t: typeid) -> (Component_ID, bool) {
 		return c.id, true
 	}
 	return 0, false
+}
+
+@(private)
+get_or_create_component_id :: proc(r: ^Registry, t: typeid, size: int = 0) -> Component_ID {
+	if c, ok := r.components[t]; ok {
+		return c.id
+	}
+
+	ensure(
+		len(r.component_sizes) < MAX_ARCH_COMPONENTS,
+		"component limit reached, raise SIG_WORDS",
+	)
+
+	cid := Component_ID(len(r.component_sizes))
+	append(&r.component_sizes, size)
+	r.components[t] = {
+		id   = cid,
+		size = size,
+	}
+	return cid
 }
 
 @(private = "file")
@@ -207,36 +222,6 @@ get_or_create_archetype :: proc(r: ^Registry, sig: Arch_Sig) -> int {
 }
 
 @(private = "file")
-get_or_create_component_id :: proc(r: ^Registry, t: typeid, size: int = 0) -> Component_ID {
-	if c, ok := r.components[t]; ok {
-		return c.id
-	}
-
-	ensure(
-		len(r.component_sizes) < MAX_ARCH_COMPONENTS,
-		"component limit reached, raise SIG_WORDS",
-	)
-
-	cid := len(r.component_sizes)
-	append(&r.component_sizes, size)
-	r.components[t] = {
-		id   = cid,
-		size = size,
-	}
-	return cid
-}
-
-@(private = "file")
-pack_entity_id :: proc(idx, gen: u32) -> Entity_ID {
-	return Entity_ID((u64(idx) << 32) | u64(gen))
-}
-
-@(private = "file")
-unpack_entity_id :: proc(id: Entity_ID) -> (Entity_Index, Entity_Gen) {
-	return Entity_Index(id >> 32), Entity_Gen(id)
-}
-
-@(private = "file")
-is_valid_entity_id :: proc(r: ^Registry, idx: Entity_Index, gen: Entity_Gen) -> bool {
-	return idx >= 0 && idx < len(r.entities) && r.entities[idx].gen == gen
+is_valid_entity_id :: proc(r: ^Registry, id: Entity_ID) -> bool {
+	return id.index >= 0 && int(id.index) < len(r.entities) && r.entities[id.index].gen == id.gen
 }

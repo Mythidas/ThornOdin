@@ -20,6 +20,7 @@ Scene_Query :: struct {
 	col_indices: [dynamic]int,
 	scanned:     int,
 	current:     int,
+	scene:       ^Scene,
 }
 
 query_create :: proc(s: ^Scene, $T: typeid, allocator := context.allocator) -> (q: Scene_Query) {
@@ -30,6 +31,7 @@ query_create :: proc(s: ^Scene, $T: typeid, allocator := context.allocator) -> (
 	q.fields = make([]Query_Field, n, allocator)
 	q.matches = make([dynamic]Query_Match, allocator)
 	q.col_indices = make([dynamic]int, allocator)
+	q.scene = s
 
 	for i in 0 ..< n {
 		f := reflect.struct_field_at(T, i)
@@ -37,8 +39,7 @@ query_create :: proc(s: ^Scene, $T: typeid, allocator := context.allocator) -> (
 		sl, is_slice := info.variant.(runtime.Type_Info_Slice)
 		assert(is_slice, "Query view fields must be slices")
 
-		cid, is_known := get_component_id(&s.reg, sl.elem.id)
-		assert(is_known, "Component is not registered in scene yet")
+		cid := get_or_create_component_id(&s.reg, sl.elem.id, sl.elem_size)
 
 		q.fields[i] = {
 			offset = f.offset,
@@ -58,9 +59,9 @@ query_destroy :: proc(q: ^Scene_Query) {
 	q^ = {}
 }
 
-query_refresh :: proc(q: ^Scene_Query, s: ^Scene) {
-	for ; q.scanned < len(s.reg.archetypes); q.scanned += 1 {
-		arch := &s.reg.archetypes[q.scanned]
+query_rescan :: proc(q: ^Scene_Query) {
+	for ; q.scanned < len(q.scene.reg.archetypes); q.scanned += 1 {
+		arch := &q.scene.reg.archetypes[q.scanned]
 
 		base := len(q.col_indices)
 		matched := true
@@ -79,6 +80,10 @@ query_refresh :: proc(q: ^Scene_Query, s: ^Scene) {
 			resize(&q.col_indices, base)
 		}
 	}
+}
+
+query_reset :: proc(q: ^Scene_Query) {
+	q.current = 0
 }
 
 query_next :: proc(q: ^Scene_Query, $T: typeid) -> (view: T, ok: bool) {
@@ -100,10 +105,6 @@ query_next :: proc(q: ^Scene_Query, $T: typeid) -> (view: T, ok: bool) {
 	}
 
 	return {}, false
-}
-
-query_reset :: proc(q: ^Scene_Query) {
-	q.current = 0
 }
 
 @(private = "file")

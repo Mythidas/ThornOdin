@@ -168,16 +168,25 @@ terminate :: proc() {
 	log.info("Graphics Terminated")
 }
 
-begin_frame :: proc(cam: Camera, cam_transform: core.Transform) {
+begin_frame :: proc() {
 	state.vertex_count = 0
 	state.index_count = 0
-	state.camera = cam
-	state.camera_transform = cam_transform
 
 	clear(&state.calls)
 }
 
 end_frame :: proc() {
+	if state.camera == {} {
+		state.camera = {
+			clear_color = {0.8, 0.8, 0.8, 1},
+			mode        = .ORTHOGRAPHIC,
+			near        = -1,
+			far         = 1,
+			zoom        = 5,
+		}
+		state.camera_transform.position = {0, 0, -6}
+	}
+
 	if state.vertex_count > 0 {
 		buffer_upload(&state.vbo, state.vertices[:state.vertex_count], state.vbo_txb)
 	}
@@ -300,6 +309,11 @@ draw_quad :: proc(
 	state.index_count += 6
 
 	push_call(texture)
+}
+
+set_camera :: proc(c: Camera, t: core.Transform) {
+	state.camera = c
+	state.camera_transform = t
 }
 
 @(private = "file")
