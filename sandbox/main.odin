@@ -108,7 +108,7 @@ main :: proc() {
 
 	world.scene_add_component(&scene, p1, graphics.Sprite)
 
-	ents := [3]world.Entity_ID{}
+	ents := [3]world.Entity_Handle{}
 	for i in 0 ..< 3 {
 		ents[i] = world.scene_create_enity(&scene)
 		t := world.scene_add_component(&scene, ents[i], core.Transform)

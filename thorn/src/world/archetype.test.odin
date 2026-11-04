@@ -87,7 +87,7 @@ remove_row_swaps_last_into_place :: proc(t: ^testing.T) {
 	moved := arch_remove_row(&arch, 2)
 	validate_test_archetype(&arch, t)
 
-	testing.expect(t, moved == last_ent, "Remove row should report the entity that was moved")
+	testing.expect(t, moved == int(last_ent), "Remove row should report the entity that was moved")
 	testing.expect(t, len(arch.entities) == last, "Entity count should shrink by one")
 	testing.expect(t, arch.entities[2] == last_ent, "Last entity was not swapped into the row")
 
@@ -132,7 +132,7 @@ migrate_row_copies_shared_components :: proc(t: ^testing.T) {
 	validate_test_archetype(&to, t)
 
 	testing.expect(t, new_row == 0, "First row in the destination should be 0")
-	testing.expect(t, moved == last_ent, "Source should report the swapped-in entity")
+	testing.expect(t, moved == int(last_ent), "Source should report the swapped-in entity")
 	testing.expect(t, len(from.entities) == 9, "Source should lose one row")
 	testing.expect(t, len(to.entities) == 1, "Destination should gain one row")
 	testing.expect(t, to.entities[new_row] == migrating_ent, "Wrong entity in destination")
@@ -160,7 +160,7 @@ make_test_archetype :: proc(count: int) -> Archetype {
 	)
 
 	for i in 1 ..< count + 1 {
-		row := arch_add_row(&arch, Entity_Index(i))
+		row := arch_add_row(&arch, u32(i))
 		c_a := cast(^TComponentA)arch_get_component(&arch, row, 0)
 		c_b := cast(^TComponentB)arch_get_component(&arch, row, 1)
 		ensure(c_a != nil && c_b != nil, "Get Component failed to return a valid ptr")
@@ -208,7 +208,7 @@ validate_test_archetype :: proc(arch: ^Archetype, t: ^testing.T) -> bool {
 	}
 	testing.expect(t, len(seen_c) == sig_count, "a.sig may contain duplicate ComponentID values")
 
-	seen := make(map[Entity_Index]struct{})
+	seen := make(map[u32]struct{})
 	defer delete(seen)
 
 	for i in arch.entities {

@@ -45,20 +45,19 @@ initialize :: proc(asset_dir: string) -> Resource_Error {
 			break
 		}
 
-		tex, e := graphics.page_create(raw_data(atlas.pixels), TEX_ATLAS_SIZE, TEX_ATLAS_SIZE)
+		tex, e := graphics.page_create(atlas.pixels, TEX_ATLAS_SIZE, TEX_ATLAS_SIZE)
 		if e != nil do return .TEXTURE_PACKING
 
 		for entry in atlas.entries {
 			img := &image_slice[entry.image]
 			path := parse_path(img.path)
 
-			state.tex_by_path[path] = graphics.texture_create(
-				tex,
-				entry.x,
-				entry.y,
-				entry.w,
-				entry.h,
-			)
+			handle, err := graphics.texture_create(tex, entry.x, entry.y, entry.w, entry.h)
+			if err != nil {
+				log.errorf("Failed to creat texture fo atlas entry: %s", path)
+				return .TEXTURE_PACKING
+			}
+			state.tex_by_path[path] = handle
 		}
 
 		if len(unpacked) == 0 do break
@@ -70,8 +69,7 @@ initialize :: proc(asset_dir: string) -> Resource_Error {
 		}
 	}
 
-	log.info("Resource Initialized")
-	log.infof("\tTextures Loaded: %v", len(state.tex_by_path))
+	log.infof("Resource Initialized: Textures (%v)", len(state.tex_by_path))
 	state.init = true
 	return nil
 }

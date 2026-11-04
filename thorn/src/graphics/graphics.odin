@@ -26,6 +26,7 @@ Graphics_Error :: enum {
 	GPU_SHADER,
 	GPU_DEVICE,
 	GPU_TEXTURE,
+	INVALID_HANDLE,
 }
 
 Vertex :: struct {
@@ -277,7 +278,7 @@ draw_quad :: proc(
 	transform: core.Transform,
 	color: core.Color = {1, 1, 1, 1},
 	uvs: [4]core.Vec2 = {{0, 0}, {1, 0}, {1, 1}, {0, 1}},
-	texture: Texture_Handle = 0,
+	texture: Texture_Handle = {},
 ) {
 	if state.vertex_count + 4 > MAX_VERTICES {
 		log.warn("Graphics quad limit reached, dropped draw")

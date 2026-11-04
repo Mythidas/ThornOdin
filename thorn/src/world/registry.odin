@@ -1,9 +1,12 @@
 package world
 
+import "thorn:core"
+
+Entity_Handle :: core.Handle(Entity_Slot)
+
 Entity_Slot :: struct {
 	arch: int,
 	row:  int,
-	gen:  Entity_Gen,
 }
 
 Component :: struct {
@@ -16,21 +19,19 @@ EMPTY_ARCH :: 0
 
 @(private)
 Registry :: struct {
-	entities:        [dynamic]Entity_Slot,
+	entities:        core.Handle_Store(Entity_Slot),
 	components:      map[typeid]Component,
 	component_sizes: [dynamic]int, // indexed by Component_ID
 	archetypes:      [dynamic]Archetype,
-	free_entities:   [dynamic]Entity_Index,
 	by_sig:          map[Arch_Sig]int,
 }
 
 @(private)
 registry_create :: proc(allocator := context.allocator) -> (reg: Registry) {
-	reg.entities = make([dynamic]Entity_Slot, allocator)
+	reg.entities = core.handles_store_create(Entity_Slot, allocator)
 	reg.components = make(map[typeid]Component, allocator)
 	reg.component_sizes = make([dynamic]int, allocator)
 	reg.archetypes = make([dynamic]Archetype, allocator)
-	reg.free_entities = make([dynamic]Entity_Index, allocator)
 	reg.by_sig = make(map[Arch_Sig]int, allocator)
 
 	idx := get_or_create_archetype(&reg, Arch_Sig{})
@@ -46,57 +47,44 @@ registry_destroy :: proc(reg: ^Registry) {
 		archetype_destroy(&a)
 	}
 
-	delete(reg.entities)
+	core.handles_store_destroy(&reg.entities)
 	delete(reg.components)
 	delete(reg.component_sizes)
 	delete(reg.archetypes)
-	delete(reg.free_entities)
 	delete(reg.by_sig)
 	reg^ = {}
 }
 
 @(private)
-registry_create_entity :: proc(r: ^Registry) -> Entity_ID {
-	index: Entity_Index
-	if len(r.free_entities) > 0 {
-		index = pop(&r.free_entities)
-	} else {
-		index = Entity_Index(len(r.entities))
-		append(&r.entities, Entity_Slot{-1, -1, 0})
-	}
+registry_create_entity :: proc(r: ^Registry) -> Entity_Handle {
+	h, ent := core.handles_slot_acquire(&r.entities)
 
-	ent := &r.entities[index]
 	ent.arch = EMPTY_ARCH
-	ent.row = arch_add_row(&r.archetypes[EMPTY_ARCH], index)
-
-	return Entity_ID{index, ent.gen}
+	ent.row = arch_add_row(&r.archetypes[EMPTY_ARCH], h.idx)
+	return h
 }
 
 @(private)
-registry_destroy_entity :: proc(r: ^Registry, id: Entity_ID) {
-	if !is_valid_entity_id(r, id) do return
-
-	ent := &r.entities[id.index]
+registry_destroy_entity :: proc(r: ^Registry, id: Entity_Handle) {
+	ent, ok := core.handles_slot_get(&r.entities, id)
+	if !ok do return
 
 	if ent.arch != -1 && ent.row != -1 {
 		arch := &r.archetypes[ent.arch]
 		if moved := arch_remove_row(arch, ent.row); moved != -1 {
-			r.entities[moved].row = ent.row
+			r.entities.data[moved].data.row = ent.row
 		}
 	}
 
 	ent.arch = -1
 	ent.row = -1
-	ent.gen += 1
-	append(&r.free_entities, id.index)
+	core.handles_slot_release(&r.entities, id)
 }
 
 @(private)
-registry_add_component :: proc(r: ^Registry, id: Entity_ID, $T: typeid) -> ^T {
-	if !is_valid_entity_id(r, id) do return nil
-
-	ent := &r.entities[id.index]
-	if ent.arch == -1 || ent.row == -1 do return nil
+registry_add_component :: proc(r: ^Registry, id: Entity_Handle, $T: typeid) -> ^T {
+	ent, ok := core.handles_slot_get(&r.entities, id)
+	if !ok || ent.arch == -1 || ent.row == -1 do return nil
 
 	cid := get_or_create_component_id(r, T, size_of(T))
 
@@ -110,7 +98,7 @@ registry_add_component :: proc(r: ^Registry, id: Entity_ID, $T: typeid) -> ^T {
 	to := &r.archetypes[to_idx]
 
 	new_row, moved := arch_migrate_row(from, to, ent.row)
-	if moved != -1 do r.entities[moved].row = ent.row
+	if moved != -1 do r.entities.data[moved].data.row = ent.row
 
 	ent.arch = to_idx
 	ent.row = new_row
@@ -118,35 +106,29 @@ registry_add_component :: proc(r: ^Registry, id: Entity_ID, $T: typeid) -> ^T {
 }
 
 @(private)
-registry_get_component :: proc(r: ^Registry, id: Entity_ID, $T: typeid) -> ^T {
-	if !is_valid_entity_id(r, id) do return nil
+registry_get_component :: proc(r: ^Registry, id: Entity_Handle, $T: typeid) -> ^T {
+	ent, ok := core.handles_slot_get(&r.entities, id)
+	if !ok || ent.arch == -1 || ent.row == -1 do return nil
 
-	ent := &r.entities[id.index]
-	if ent.arch == -1 || ent.row == -1 do return nil
-
-	cid, ok := get_component_id(r, T)
-	if !ok do return nil
+	cid, found := get_component_id(r, T)
+	if !found do return nil
 
 	return cast(^T)arch_get_component(&r.archetypes[ent.arch], ent.row, cid)
 }
 
 @(private)
-registry_has_component :: proc(r: ^Registry, id: Entity_ID, $T: typeid) -> bool {
-	if !is_valid_entity_id(r, id) do return false
-
-	ent := &r.entities[id.index]
-	if ent.arch == -1 do return false
+registry_has_component :: proc(r: ^Registry, id: Entity_Handle, $T: typeid) -> bool {
+	ent, ok := core.handles_slot_get(&r.entities, id)
+	if !ok || ent.arch == -1 do return false
 
 	cid, ok := get_component_id(r, T)
 	return ok && arch_sig_has(r.archetypes[ent.arch].sig, cid)
 }
 
 @(private)
-registry_remove_component :: proc(r: ^Registry, id: Entity_ID, $T: typeid) {
-	if !is_valid_entity_id(r, id) do return
-
-	ent := &r.entities[id.index]
-	if ent.arch == -1 || ent.row == -1 do return
+registry_remove_component :: proc(r: ^Registry, id: Entity_Handle, $T: typeid) {
+	ent, ok := core.handles_slot_get(&r.entities, id)
+	if !ok || ent.arch == -1 || ent.row == -1 do return
 
 	cid, ok := get_component_id(r, T)
 	if !ok do return
@@ -160,15 +142,15 @@ registry_remove_component :: proc(r: ^Registry, id: Entity_ID, $T: typeid) {
 	to := &r.archetypes[to_idx]
 
 	new_row, moved := arch_migrate_row(from, to, ent.row)
-	if moved != -1 do r.entities[moved].row = ent.row
+	if moved != -1 do r.entities.data[moved].data.row = ent.row
 
 	ent.arch = to_idx
 	ent.row = new_row
 }
 
 @(private)
-registry_entity_id :: proc(r: ^Registry, idx: Entity_Index) -> Entity_ID {
-	return {idx, r.entities[idx].gen}
+registry_entity_id :: proc(r: ^Registry, idx: u32) -> Entity_Handle {
+	return {idx, r.entities.data[idx].gen}
 }
 
 @(private)
@@ -219,9 +201,4 @@ get_or_create_archetype :: proc(r: ^Registry, sig: Arch_Sig) -> int {
 	append(&r.archetypes, archetype_create(sig, sizes, r.archetypes.allocator))
 	r.by_sig[sig] = idx
 	return idx
-}
-
-@(private = "file")
-is_valid_entity_id :: proc(r: ^Registry, id: Entity_ID) -> bool {
-	return id.index >= 0 && int(id.index) < len(r.entities) && r.entities[id.index].gen == id.gen
 }

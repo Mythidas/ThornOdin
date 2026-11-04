@@ -8,12 +8,6 @@ SIG_WORDS :: 4
 @(private)
 MAX_ARCH_COMPONENTS :: SIG_WORDS * 64
 
-Entity_Index :: distinct int
-Entity_Gen :: distinct u32
-Entity_ID :: struct {
-	index: Entity_Index,
-	gen:   Entity_Gen,
-}
 Component_ID :: distinct int
 
 // Non-nil address handed out for zero-sized components (tags)
@@ -32,7 +26,7 @@ Arch_Column :: struct {
 @(private)
 Archetype :: struct {
 	sig:        Arch_Sig,
-	entities:   [dynamic]Entity_Index,
+	entities:   [dynamic]u32,
 	columns:    [dynamic]Arch_Column,
 	components: map[Component_ID]int,
 }
@@ -50,7 +44,7 @@ archetype_create :: proc(
 	ensure(len(sizes) == count)
 
 	arch.sig = sig
-	arch.entities = make([dynamic]Entity_Index, allocator)
+	arch.entities = make([dynamic]u32, allocator)
 	arch.columns = make([dynamic]Arch_Column, count, allocator)
 	arch.components = make(map[Component_ID]int, allocator)
 
@@ -83,7 +77,7 @@ archetype_destroy :: proc(arch: ^Archetype) {
 }
 
 @(private)
-arch_add_row :: proc(arch: ^Archetype, index: Entity_Index) -> int {
+arch_add_row :: proc(arch: ^Archetype, index: u32) -> int {
 	append(&arch.entities, index)
 	for &c in arch.columns {
 		if c.size == 0 do continue
@@ -97,7 +91,7 @@ arch_add_row :: proc(arch: ^Archetype, index: Entity_Index) -> int {
 
 // Swap-remove. Returns the entity index that was moved into `row`, or -1 if none.
 @(private)
-arch_remove_row :: proc(arch: ^Archetype, row: int) -> (moved: Entity_Index) {
+arch_remove_row :: proc(arch: ^Archetype, row: int) -> (moved: int) {
 	assert(row < len(arch.entities) && row >= 0)
 
 	last := len(arch.entities) - 1
@@ -109,7 +103,7 @@ arch_remove_row :: proc(arch: ^Archetype, row: int) -> (moved: Entity_Index) {
 			mem.copy(&c.data[row * c.size], &c.data[last * c.size], c.size)
 		}
 		arch.entities[row] = arch.entities[last]
-		moved = arch.entities[row]
+		moved = int(arch.entities[row])
 	}
 
 	pop(&arch.entities)
@@ -124,13 +118,7 @@ arch_remove_row :: proc(arch: ^Archetype, row: int) -> (moved: Entity_Index) {
 // Copies shared components into `to`, then swap-removes from `from`.
 // Returns the new row in `to` and the entity (if any) moved within `from`.
 @(private)
-arch_migrate_row :: proc(
-	from, to: ^Archetype,
-	from_row: int,
-) -> (
-	new_row: int,
-	moved: Entity_Index,
-) {
+arch_migrate_row :: proc(from, to: ^Archetype, from_row: int) -> (new_row: int, moved: int) {
 	assert(from != nil && to != nil && from != to)
 	assert(from_row < len(from.entities) && from_row >= 0)
 
