@@ -1,5 +1,6 @@
 package input
 
+import "core:math/linalg"
 import "thorn:core"
 import "thorn:event"
 
@@ -53,5 +54,10 @@ get_vector :: proc(pos_x, neg_x, pos_y, neg_y: Key) -> core.Vec2 {
 	xval := int(is_down(pos_x)) - int(is_down(neg_x))
 	yval := int(is_down(pos_y)) - int(is_down(neg_y))
 
-	return {f32(xval), f32(yval)}
+	if xval == 0 && yval == 0 do return {0, 0}
+	return linalg.normalize([2]f32{f32(xval), f32(yval)})
+}
+
+get_axis :: proc(pos, neg: Key) -> f32 {
+	return f32(int(is_down(pos)) - int(is_down(neg)))
 }

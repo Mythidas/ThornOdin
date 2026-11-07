@@ -1,11 +1,11 @@
 package engine
 
+import "thorn:ecs"
 import "thorn:event"
 import "thorn:graphics"
 import "thorn:input"
 import "thorn:resource"
 import "thorn:window"
-import "thorn:world"
 
 import "core:log"
 import "core:time"
@@ -28,7 +28,7 @@ state: struct {
 	last_frame:   time.Tick,
 	elapsed_time: f64,
 	fixed_acc:    f64,
-	active_scene: ^world.Scene,
+	active_scene: ^ecs.Scene,
 	systems:      [dynamic]System_Entry,
 }
 
@@ -37,6 +37,9 @@ system_counter: System_ID = 1
 
 initialize :: proc(def: Engine_Def) -> (err: Engine_Error) {
 	ensure(state.init == false, "Engine.initialize() has already called")
+
+	ecs.initialize()
+	defer if err != nil do ecs.terminate()
 
 	window.initialize({title = "Thorn Engine", width = 1280, height = 720}) or_return
 	defer if err != nil do window.terminate()
@@ -66,7 +69,7 @@ terminate :: proc() {
 	window.terminate()
 
 	for &s in state.systems {
-		world.query_destroy(&s.system.query)
+		ecs.query_destroy(&s.system.query)
 		free(s.system)
 	}
 	delete(state.systems)
@@ -93,7 +96,8 @@ tick :: proc() -> bool {
 	run_phase(.UPDATE, dt)
 
 	for state.fixed_acc >= f64(state.def.fixed_step) {
-		run_phase(.FIXED_UPDATE, dt)
+		run_phase(.FIXED_UPDATE, f64(state.def.fixed_step))
+		ecs.scene_fixed_update(state.active_scene, state.def.fixed_step)
 		state.fixed_acc -= f64(state.def.fixed_step)
 	}
 
@@ -105,7 +109,7 @@ tick :: proc() -> bool {
 	return state.running
 }
 
-set_active_scene :: proc(scene: ^world.Scene) {
+set_active_scene :: proc(scene: ^ecs.Scene) {
 	if state.active_scene == scene do return
 	for e in state.systems do system_bind(e.system, nil)
 
@@ -144,6 +148,10 @@ unregister_system :: proc(id: System_ID) {
 
 elapsed_time :: proc() -> f32 {
 	return f32(state.elapsed_time)
+}
+
+get_active_scene :: proc() -> ^ecs.Scene {
+	return state.active_scene
 }
 
 @(private)

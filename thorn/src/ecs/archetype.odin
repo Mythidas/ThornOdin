@@ -1,4 +1,4 @@
-package world
+package ecs
 
 import "base:intrinsics"
 import "core:mem"

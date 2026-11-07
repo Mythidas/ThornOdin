@@ -1,4 +1,4 @@
-package world
+package ecs
 
 import "thorn:core"
 
@@ -9,19 +9,15 @@ Entity_Slot :: struct {
 	row:  int,
 }
 
-Component :: struct {
-	id:   Component_ID,
-	size: int,
-}
-
 @(private)
 EMPTY_ARCH :: 0
 
 @(private)
 Registry :: struct {
 	entities:        core.Handle_Store(Entity_Slot),
-	components:      map[typeid]Component,
+	components:      map[typeid]Component_ID,
 	component_sizes: [dynamic]int, // indexed by Component_ID
+	component_hooks: [dynamic]Component_Hooks,
 	archetypes:      [dynamic]Archetype,
 	by_sig:          map[Arch_Sig]int,
 }
@@ -29,7 +25,7 @@ Registry :: struct {
 @(private)
 registry_create :: proc(allocator := context.allocator) -> (reg: Registry) {
 	reg.entities = core.handles_store_create(Entity_Slot, allocator)
-	reg.components = make(map[typeid]Component, allocator)
+	reg.components = make(map[typeid]Component_ID, allocator)
 	reg.component_sizes = make([dynamic]int, allocator)
 	reg.archetypes = make([dynamic]Archetype, allocator)
 	reg.by_sig = make(map[Arch_Sig]int, allocator)
@@ -50,6 +46,7 @@ registry_destroy :: proc(reg: ^Registry) {
 	core.handles_store_destroy(&reg.entities)
 	delete(reg.components)
 	delete(reg.component_sizes)
+	delete(reg.component_hooks)
 	delete(reg.archetypes)
 	delete(reg.by_sig)
 	reg^ = {}
@@ -121,8 +118,8 @@ registry_has_component :: proc(r: ^Registry, id: Entity_Handle, $T: typeid) -> b
 	ent, ok := core.handles_slot_get(&r.entities, id)
 	if !ok || ent.arch == -1 do return false
 
-	cid, ok := get_component_id(r, T)
-	return ok && arch_sig_has(r.archetypes[ent.arch].sig, cid)
+	cid, known := get_component_id(r, T)
+	return known && arch_sig_has(r.archetypes[ent.arch].sig, cid)
 }
 
 @(private)
@@ -156,7 +153,7 @@ registry_entity_id :: proc(r: ^Registry, idx: u32) -> Entity_Handle {
 @(private)
 get_component_id :: proc(r: ^Registry, t: typeid) -> (Component_ID, bool) {
 	if c, ok := r.components[t]; ok {
-		return c.id, true
+		return c, true
 	}
 	return 0, false
 }
@@ -164,7 +161,7 @@ get_component_id :: proc(r: ^Registry, t: typeid) -> (Component_ID, bool) {
 @(private)
 get_or_create_component_id :: proc(r: ^Registry, t: typeid, size: int = 0) -> Component_ID {
 	if c, ok := r.components[t]; ok {
-		return c.id
+		return c
 	}
 
 	ensure(
@@ -173,11 +170,11 @@ get_or_create_component_id :: proc(r: ^Registry, t: typeid, size: int = 0) -> Co
 	)
 
 	cid := Component_ID(len(r.component_sizes))
+	hooks, found := state.hooks[t]
 	append(&r.component_sizes, size)
-	r.components[t] = {
-		id   = cid,
-		size = size,
-	}
+	append(&r.component_hooks, found ? hooks : {})
+
+	r.components[t] = cid
 	return cid
 }
 

@@ -1,18 +1,18 @@
 package engine
 
-import "thorn:world"
+import "thorn:ecs"
 
 System_ID :: distinct u64
 
 System :: struct {
 	data:                 rawptr,
-	scene:                ^world.Scene,
-	query:                world.Scene_Query,
+	scene:                ^ecs.Scene,
+	query:                ecs.Scene_Query,
 	phase:                System_Phase,
 	global:               bool,
 	on_attach, on_detach: proc(system: ^System),
 	on_update:            proc(system: ^System, dt: f32),
-	on_scene_change:      proc(system: ^System, scene: ^world.Scene),
+	on_scene_change:      proc(system: ^System, scene: ^ecs.Scene),
 }
 
 System_Phase :: enum {
@@ -29,7 +29,7 @@ System_Entry :: struct {
 }
 
 @(private)
-system_bind :: proc(s: ^System, scene: ^world.Scene) {
+system_bind :: proc(s: ^System, scene: ^ecs.Scene) {
 	if s.scene == scene do return
 
 	s.scene = scene
@@ -46,22 +46,22 @@ system_query_helper :: proc(
 	sys.global = false
 	sys.phase = phase
 	sys.on_update = proc(system: ^System, dt: f32) {
-		world.query_rescan(&system.query)
-		world.query_reset(&system.query)
+		ecs.query_rescan(&system.query)
+		ecs.query_reset(&system.query)
 
-		for chunk in world.query_next(&system.query, T) {
+		for chunk in ecs.query_next(&system.query, T) {
 			update(chunk, dt)
 		}
 	}
 
 	sys.on_detach = proc(s: ^System) {
-		world.query_destroy(&s.query)
+		ecs.query_destroy(&s.query)
 	}
 
-	sys.on_scene_change = proc(s: ^System, scene: ^world.Scene) {
-		world.query_destroy(&s.query)
+	sys.on_scene_change = proc(s: ^System, scene: ^ecs.Scene) {
+		ecs.query_destroy(&s.query)
 		if scene != nil {
-			s.query = world.query_create(scene, T)
+			s.query = ecs.query_create(scene, T)
 		}
 	}
 

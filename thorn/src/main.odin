@@ -1,5 +1,5 @@
 package thorn
 
-@(require) import "thorn:world"
+@(require) import "thorn:ecs"
 
 main :: proc() {}

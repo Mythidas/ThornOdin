@@ -1,4 +1,4 @@
-package world
+package ecs
 
 import "core:math/rand"
 import "core:testing"
