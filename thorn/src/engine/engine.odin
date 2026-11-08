@@ -28,6 +28,7 @@ state: struct {
 	last_frame:   time.Tick,
 	elapsed_time: f64,
 	fixed_acc:    f64,
+	fixed_acc_max: f64,
 	active_scene: ^ecs.Scene,
 	systems:      [dynamic]System_Entry,
 }
@@ -56,6 +57,7 @@ initialize :: proc(def: Engine_Def) -> (err: Engine_Error) {
 	state.running = true
 	state.last_frame = time.tick_now()
 	state.def = def
+	state.fixed_acc_max = f64(state.def.fixed_step / 8)
 
 	log.info("Engine Initialized")
 	return nil
@@ -67,6 +69,7 @@ terminate :: proc() {
 	resource.terminate()
 	graphics.terminate()
 	window.terminate()
+	ecs.terminate()
 
 	for &s in state.systems {
 		ecs.query_destroy(&s.system.query)
@@ -85,7 +88,7 @@ tick :: proc() -> bool {
 
 	dt := time.duration_seconds(time.tick_since(state.last_frame))
 	state.elapsed_time += dt
-	state.fixed_acc += dt
+	state.fixed_acc = max(state.fixed_acc + dt, state.fixed_acc_max)
 	state.last_frame = time.tick_now()
 
 	run_phase(.PRE_UPDATE, dt)

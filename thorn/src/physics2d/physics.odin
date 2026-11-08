@@ -1,5 +1,6 @@
 package physics2d
 
+import "core:log"
 import "thorn:core"
 import "vendor:box2d"
 
@@ -134,15 +135,23 @@ body_set_velocity :: proc(rb: ^Rigidbody, force: core.Vec2) {
 }
 
 body_is_grounded :: proc(rb: ^Rigidbody) -> bool {
-	buf: [8]box2d.ContactData
-	for c in box2d.Body_GetContactData(rb._id, buf[:]) {
-		if c.manifold.pointCount == 0 do continue
-		// Normal points from shape A to shape B
-		n := c.manifold.normal
-		if box2d.Shape_GetBody(c.shapeIdA) != rb._id do n = -n
-		if n.y > 0.7 do return true // floor-ish, not wall-ish
-	}
-	return false
+	raycast: box2d.RayCastInput
+	raycast.origin = body_get_position(rb)
+	raycast.translation = {0, 0}
+
+	body_box := box2d.MakeBox(2, 2)
+	body_shape_def := box2d.DefaultShapeDef()
+	body_shape_def.enableHitEvents = true
+	body_shape_def.isSensor = true
+	shape := box2d.CreatePolygonShape(rb._id, body_shape_def, &body_box)
+	defer box2d.DestroyShape(shape, false)
+
+	result := box2d.RayCastPolygon(raycast, body_box)
+	log.info(result, raycast)
+	if !result.hit do return false
+
+	// TODO: Check if geometry is floor
+	return true
 }
 
 is_valid :: proc {

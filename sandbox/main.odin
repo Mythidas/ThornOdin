@@ -20,26 +20,44 @@ Player_Anim :: enum {
 
 anim_set: graphics.Anim_Clip_Set
 
-Player :: struct {}
-Player_View :: struct {
-	tags:       []Player,
-	transforms: []core.Transform,
-	anims:      []graphics.Animator,
-	bodys:      []physics2d.Rigidbody,
+Player :: struct {
+	dir: f32,
+	wants_jump: bool,
+	grounded: bool
 }
 
-player_move :: proc(view: Player_View, dt: f32) {
+Player_View :: struct {
+	players:       []Player,
+	transforms: []core.Transform,
+	anims:      []graphics.Animator,
+}
+
+Player_Move_View :: struct {
+	players: []Player,
+	bodys: []physics2d.Rigidbody,
+}
+
+player_update :: proc(view: Player_View, dt: f32) {
 	dir := input.get_axis(.D, .A)
 
-	for &body, i in view.bodys {
-		vel := physics2d.body_get_velocity(&body)
-		vel.x = linalg.lerp(vel.x, dir * 2.5, 20 * dt)
-		physics2d.body_set_velocity(&body, vel)
+		view.players[0].dir = dir
+		view.players[0].wants_jump = input.is_pressed(.SPACE)
 
 		if dir > 0 {
-			graphics.animator_play(&view.anims[i], int(Player_Anim.IDLE_E))
+			graphics.animator_play(&view.anims[0], int(Player_Anim.IDLE_E))
 		} else if dir < 0 {
-			graphics.animator_play(&view.anims[i], int(Player_Anim.IDLE_W))
+			graphics.animator_play(&view.anims[0], int(Player_Anim.IDLE_W))
+		}
+}
+
+player_move :: proc(view: Player_Move_View, dt: f32) {
+	for &body, i in view.bodys {
+		vel := physics2d.body_get_velocity(&body)
+		vel.x = linalg.lerp(vel.x, view.players[i].dir * 2.5, 20 * dt)
+		physics2d.body_set_velocity(&body, vel)
+
+		if view.players[i].wants_jump && physics2d.body_is_grounded(&body) {
+			physics2d.body_add_impulse(&body, {0, 100})
 		}
 	}
 }
@@ -76,7 +94,8 @@ main :: proc() {
 	scene := ecs.scene_create()
 	defer ecs.scene_destroy(&scene)
 
-	engine.register_system(engine.system_query_helper(Player_View, .FIXED_UPDATE, player_move))
+	engine.register_system(engine.system_query_helper(Player_View, .UPDATE, player_update))
+	engine.register_system(engine.system_query_helper(Player_Move_View, .FIXED_UPDATE, player_move))
 
 	append(
 		&anim_set.clips,
@@ -129,9 +148,10 @@ main :: proc() {
 	fcol.friction = 10
 
 	ft := ecs.scene_add_component(&scene, floor, core.Transform)
-	ft.position = {0, -4, 0}
+	ft.position = {0, -2, 0}
 	ft.scale = {1, 1, 1}
-
+	fsprite := ecs.scene_add_component(&scene, floor, graphics.Sprite)
+	fsprite.rect = {0,0,1,1}
 
 	cam := ecs.scene_create_enity(&scene)
 	c := ecs.scene_add_component(&scene, cam, graphics.Camera)

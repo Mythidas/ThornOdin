@@ -1,5 +1,7 @@
 package ecs
 
+import "core:log"
+
 @(private)
 state: struct {
 	init:  bool,
@@ -15,13 +17,17 @@ initialize :: proc() {
 	ensure(state.init == false, "World.initialize() has already been called")
 
 	state.hooks = make(map[typeid]Component_Hooks)
-	state.init = false
+	state.init = true
+
+	log.info("ECS initialized")
 }
 
 terminate :: proc() {
 	ensure(state.init, "World.initialize() needs to be called")
 
 	delete(state.hooks)
+
+	log.info("ECS terminated")
 }
 
 register_hooks :: proc($T: typeid, ch: Component_Hooks) {
